@@ -11,7 +11,10 @@ dotenv.config();
 const app = express();
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: '*', // Allow all origins for development
+  credentials: true,
+}));
 app.use(morgan('dev'));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
@@ -33,9 +36,11 @@ mongoose
 
 // Import routes
 const authRoutes = require('./app/routes/authRoutes');
+const groupRoutes = require('./app/routes/groupRoutes');
 
-// Base API route
+// Base API routes
 app.use('/api/auth', authRoutes);
+app.use('/api/groups', groupRoutes);
 
 // 404 handler
 app.use((req, res, next) => {
@@ -57,9 +62,11 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 5001;
+const HOST = process.env.HOST || '0.0.0.0'; // Listen on all interfaces
 
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+app.listen(PORT, HOST, () => {
+  console.log(`Server is running on http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
+  console.log(`Server accessible from network at: http://192.168.18.122:${PORT}`);
 });
 
 
