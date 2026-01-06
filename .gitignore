@@ -27,4 +27,7 @@ coverage/
 tmp/
 temp/
 
+# Firebase service account key - DO NOT COMMIT
+config/firebase-service-account.json
+
 

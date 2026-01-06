@@ -1,4 +1,5 @@
 const Group = require('../models/Group');
+const { sendPushNotification } = require('../services/firebaseService');
 
 // @desc    Create a new group
 // @route   POST /api/groups
@@ -389,6 +390,26 @@ exports.updatePaymentStatus = async (req, res, next) => {
 
     await group.save();
 
+    // Send push notification to group owner when payment is marked as paid
+    if (isPaid) {
+      try {
+        await sendPushNotification(
+          group.createdBy,
+          'Payment Received',
+          `${participant.name} has marked their payment as complete in ${group.name}`,
+          {
+            type: 'payment',
+            groupId: group._id.toString(),
+            participantId: participant._id.toString(),
+            participantName: participant.name,
+          }
+        );
+      } catch (notificationError) {
+        // Don't fail the request if notification fails
+        console.error('Error sending payment notification:', notificationError);
+      }
+    }
+
     res.status(200).json({
       success: true,
       data: {
@@ -584,10 +605,12 @@ exports.nextRound = async (req, res, next) => {
     // Move to next recipient in sequence (0 → 1 → 2 → 3 → ...)
     // Works dynamically for any number of participants (3, 5, 10, etc.)
     // Each participant receives payment once, in order
+    let nextRecipient = null;
     if (!allNowPaidOut) {
       // Move to next participant sequentially
       const nextIndex = (group.currentRecipientIndex + 1) % sortedParticipants.length;
       group.currentRecipientIndex = nextIndex;
+      nextRecipient = sortedParticipants[nextIndex];
     }
     // If all are paid out, currentRecipientIndex stays at the last position
 
@@ -600,6 +623,38 @@ exports.nextRound = async (req, res, next) => {
     });
 
     await group.save();
+
+    // Send push notifications
+    try {
+      if (allNowPaidOut) {
+        // Group completed notification
+        await sendPushNotification(
+          group.createdBy,
+          'Ayuuto Completed! 🎉',
+          `All members of ${group.name} have received their payments. The group is now complete!`,
+          {
+            type: 'group_completed',
+            groupId: group._id.toString(),
+          }
+        );
+      } else if (nextRecipient) {
+        // Next round started notification
+        await sendPushNotification(
+          group.createdBy,
+          'Next Round Started',
+          `Round ${group.currentRecipientIndex + 1} has started. ${nextRecipient.name} is now the recipient.`,
+          {
+            type: 'next_round',
+            groupId: group._id.toString(),
+            recipientName: nextRecipient.name,
+            roundNumber: (group.currentRecipientIndex + 1).toString(),
+          }
+        );
+      }
+    } catch (notificationError) {
+      // Don't fail the request if notification fails
+      console.error('Error sending next round notification:', notificationError);
+    }
 
     // Get updated sorted participants
     const updatedSortedParticipants = [...group.participants].sort((a, b) => {

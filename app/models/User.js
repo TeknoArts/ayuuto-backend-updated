@@ -20,6 +20,24 @@ const userSchema = new mongoose.Schema(
       required: true,
       minlength: 6,
     },
+    pushTokens: [{
+      token: {
+        type: String,
+        required: true,
+      },
+      platform: {
+        type: String,
+        enum: ['ios', 'android', 'web'],
+        required: true,
+      },
+      deviceId: {
+        type: String,
+      },
+      createdAt: {
+        type: Date,
+        default: Date.now,
+      },
+    }],
   },
   {
     timestamps: true,

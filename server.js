@@ -37,10 +37,12 @@ mongoose
 // Import routes
 const authRoutes = require('./app/routes/authRoutes');
 const groupRoutes = require('./app/routes/groupRoutes');
+const userRoutes = require('./app/routes/userRoutes');
 
 // Base API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/groups', groupRoutes);
+app.use('/api/users', userRoutes);
 
 // 404 handler
 app.use((req, res, next) => {

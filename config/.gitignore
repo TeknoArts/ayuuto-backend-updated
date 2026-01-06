@@ -1,0 +1,6 @@
+# Firebase service account key - DO NOT COMMIT THIS FILE
+firebase-service-account.json
+
+# But allow the example file
+!firebase-service-account.example.json
+
