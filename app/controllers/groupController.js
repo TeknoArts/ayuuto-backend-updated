@@ -1,4 +1,5 @@
 const Group = require('../models/Group');
+const Round = require('../models/Round');
 const { sendPushNotification } = require('../services/firebaseService');
 
 // @desc    Create a new group
@@ -256,7 +257,7 @@ exports.getGroupDetails = async (req, res, next) => {
   }
 };
 
-// @desc    Spin for order
+// @desc    Spin for order and create rounds
 // @route   POST /api/groups/:groupId/spin
 // @access  Private
 exports.spinForOrder = async (req, res, next) => {
@@ -307,8 +308,23 @@ exports.spinForOrder = async (req, res, next) => {
 
     await group.save();
 
-    // Sort for response
+    // Sort for response (and for defining rounds)
     const sortedParticipants = [...group.participants].sort((a, b) => a.order - b.order);
+
+    // Remove any existing rounds for this group (in case of re-spin)
+    await Round.deleteMany({ group: group._id });
+
+    // Create one Round per participant, in order
+    const roundDocs = await Round.insertMany(
+      sortedParticipants.map((p, index) => ({
+        group: group._id,
+        roundNumber: index + 1,
+        recipientParticipantId: p._id,
+        status: index === 0 ? 'IN_PROGRESS' : 'PENDING',
+      }))
+    );
+
+    const currentRound = roundDocs.find((r) => r.roundNumber === 1) || null;
 
     // Map participants to include id
     const participantsWithId = sortedParticipants.map((p) => ({
@@ -322,9 +338,10 @@ exports.spinForOrder = async (req, res, next) => {
     }));
 
     // Calculate total savings
-    const totalSavings = group.amountPerPerson && group.memberCount 
-      ? group.amountPerPerson * group.memberCount 
-      : 0;
+    const totalSavings =
+      group.amountPerPerson && group.memberCount
+        ? group.amountPerPerson * group.memberCount
+        : 0;
 
     res.status(200).json({
       success: true,
@@ -341,6 +358,20 @@ exports.spinForOrder = async (req, res, next) => {
           currentRecipient: sortedParticipants[0].name,
           currentRecipientIndex: group.currentRecipientIndex,
           isOrderSet: true,
+          rounds: roundDocs.map((round) => ({
+            id: round._id,
+            roundNumber: round.roundNumber,
+            recipientParticipantId: round.recipientParticipantId,
+            status: round.status,
+          })),
+          currentRound: currentRound
+            ? {
+                id: currentRound._id,
+                roundNumber: currentRound.roundNumber,
+                recipientParticipantId: currentRound.recipientParticipantId,
+                status: currentRound.status,
+              }
+            : null,
         },
       },
     });
@@ -614,20 +645,55 @@ exports.nextRound = async (req, res, next) => {
     }
     // If all are paid out, currentRecipientIndex stays at the last position
 
-    // Reset payment status for all participants except the one who just received payment
+    // Reset payment status for ALL participants for the new round.
+    // `hasReceivedPayment` keeps track of who already got their payout,
+    // while `isPaid` is reused for contributions in the current round.
     group.participants.forEach((participant) => {
-      if (participant._id.toString() !== currentRecipient._id.toString()) {
-        participant.isPaid = false;
-        participant.paidAt = null;
-      }
+      participant.isPaid = false;
+      participant.paidAt = null;
     });
 
     await group.save();
 
+    // Update Round documents to reflect progression to the next round
+    let rounds = await Round.find({ group: group._id }).sort({ roundNumber: 1 });
+    let currentRoundDoc = null;
+
+    if (rounds.length > 0) {
+      const previousRoundIndex = group.currentRecipientIndex > 0 ? group.currentRecipientIndex - 1 : 0;
+
+      // Mark previous round as completed if it exists
+      const previousRound = rounds[previousRoundIndex];
+      if (previousRound) {
+        previousRound.status = 'COMPLETED';
+        previousRound.completedAt = new Date();
+        await previousRound.save();
+      }
+
+      if (allNowPaidOut) {
+        // All rounds effectively completed
+        currentRoundDoc = previousRound || null;
+      } else {
+        // Move to next round in sequence
+        const nextRoundIndex = group.currentRecipientIndex;
+        const nextRoundDoc = rounds[nextRoundIndex];
+        if (nextRoundDoc) {
+          nextRoundDoc.status = 'IN_PROGRESS';
+          if (!nextRoundDoc.startedAt) {
+            nextRoundDoc.startedAt = new Date();
+          }
+          await nextRoundDoc.save();
+          currentRoundDoc = nextRoundDoc;
+        }
+      }
+
+      // Refresh rounds list after updates
+      rounds = await Round.find({ group: group._id }).sort({ roundNumber: 1 });
+    }
+
     // Send push notifications
     try {
       if (allNowPaidOut) {
-        // Group completed notification
         await sendPushNotification(
           group.createdBy,
           'Ayuuto Completed! 🎉',
@@ -637,22 +703,20 @@ exports.nextRound = async (req, res, next) => {
             groupId: group._id.toString(),
           }
         );
-      } else if (nextRecipient) {
-        // Next round started notification
+      } else if (nextRecipient && currentRoundDoc) {
         await sendPushNotification(
           group.createdBy,
           'Next Round Started',
-          `Round ${group.currentRecipientIndex + 1} has started. ${nextRecipient.name} is now the recipient.`,
+          `Round ${currentRoundDoc.roundNumber} has started. ${nextRecipient.name} is now the recipient.`,
           {
             type: 'next_round',
             groupId: group._id.toString(),
             recipientName: nextRecipient.name,
-            roundNumber: (group.currentRecipientIndex + 1).toString(),
+            roundNumber: currentRoundDoc.roundNumber.toString(),
           }
         );
       }
     } catch (notificationError) {
-      // Don't fail the request if notification fails
       console.error('Error sending next round notification:', notificationError);
     }
 
@@ -696,6 +760,20 @@ exports.nextRound = async (req, res, next) => {
           currentRecipient: newCurrentRecipient ? newCurrentRecipient.name : null,
           currentRecipientIndex: group.currentRecipientIndex,
           isOrderSet: group.isOrderSet,
+          rounds: rounds.map((round) => ({
+            id: round._id,
+            roundNumber: round.roundNumber,
+            recipientParticipantId: round.recipientParticipantId,
+            status: round.status,
+          })),
+          currentRound: currentRoundDoc
+            ? {
+                id: currentRoundDoc._id,
+                roundNumber: currentRoundDoc.roundNumber,
+                recipientParticipantId: currentRoundDoc.recipientParticipantId,
+                status: currentRoundDoc.status,
+              }
+            : null,
         },
       },
     });

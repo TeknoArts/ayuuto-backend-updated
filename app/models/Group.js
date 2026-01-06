@@ -1,32 +1,5 @@
 const mongoose = require('mongoose');
-
-const participantSchema = new mongoose.Schema({
-  name: {
-    type: String,
-    required: true,
-    trim: true,
-  },
-  order: {
-    type: Number,
-    default: null,
-  },
-  isPaid: {
-    type: Boolean,
-    default: false,
-  },
-  paidAt: {
-    type: Date,
-    default: null,
-  },
-  hasReceivedPayment: {
-    type: Boolean,
-    default: false,
-  },
-  receivedPaymentAt: {
-    type: Date,
-    default: null,
-  },
-});
+const participantSchema = require('./Participant');
 
 const groupSchema = new mongoose.Schema(
   {
