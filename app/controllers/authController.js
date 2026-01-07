@@ -118,4 +118,76 @@ exports.getMe = async (req, res, next) => {
   }
 };
 
+// @desc    Request password reset (basic implementation, no email send)
+// @route   POST /api/auth/forgot-password
+// @access  Public
+exports.forgotPassword = async (req, res, next) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required',
+      });
+    }
+
+    const user = await User.findOne({ email });
+
+    // For security, respond with success even if user is not found
+    if (!user) {
+      return res.status(200).json({
+        success: true,
+        message: 'If an account with that email exists, you will receive reset instructions.',
+      });
+    }
+
+    // NOTE: In a full implementation, you would generate a reset token and email it.
+    // For now, we just log and return a generic success message.
+    console.log(`[AUTH] Password reset requested for email: ${email}`);
+
+    return res.status(200).json({
+      success: true,
+      message: 'If an account with that email exists, you will receive reset instructions.',
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// @desc    Reset password directly using email and new password
+// @route   POST /api/auth/reset-password
+// @access  Public
+exports.resetPassword = async (req, res, next) => {
+  try {
+    const { email, newPassword } = req.body;
+
+    if (!email || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email and new password are required',
+      });
+    }
+
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+
+    user.password = newPassword;
+    await user.save(); // will re-hash via pre-save hook
+
+    console.log(`[AUTH] Password reset successfully for email: ${email}`);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Password has been reset successfully. You can now log in with your new password.',
+    });
+  } catch (err) {
+    next(err);
+  }
+};
 
