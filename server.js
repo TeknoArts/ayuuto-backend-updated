@@ -28,6 +28,8 @@ mongoose
   })
   .then(() => {
     console.log('Connected to MongoDB');
+    // Initialize scheduler after database connection is established
+    initializeScheduler();
   })
   .catch((err) => {
     console.error('MongoDB connection error:', err.message);
@@ -43,6 +45,9 @@ const userRoutes = require('./app/routes/userRoutes');
 app.use('/api/auth', authRoutes);
 app.use('/api/groups', groupRoutes);
 app.use('/api/users', userRoutes);
+
+// Initialize scheduler for collection notifications
+const { initializeScheduler } = require('./app/services/schedulerService');
 
 // 404 handler
 app.use((req, res, next) => {

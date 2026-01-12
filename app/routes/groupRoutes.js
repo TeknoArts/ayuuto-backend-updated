@@ -19,6 +19,7 @@ router.put('/:groupId/collection', groupController.setCollectionDetails);
 router.post('/:groupId/spin', groupController.spinForOrder);
 router.post('/:groupId/next-round', groupController.nextRound);
 router.put('/:groupId/participants/:participantId/payment', groupController.updatePaymentStatus);
+router.post('/test-collection-notifications', groupController.testCollectionNotifications);
 
 module.exports = router;
 

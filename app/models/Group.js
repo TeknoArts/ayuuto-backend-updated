@@ -49,6 +49,10 @@ const groupSchema = new mongoose.Schema(
       enum: ['ACTIVE', 'COMPLETED', 'CANCELLED'],
       default: 'ACTIVE',
     },
+    lastCollectionNotificationSent: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: true,

@@ -3,6 +3,7 @@ const Round = require('../models/Round');
 const PaymentLog = require('../models/PaymentLog');
 const User = require('../models/User');
 const notificationService = require('../services/notificationService');
+const { sendGroupInvitationEmail } = require('../services/emailService');
 
 // @desc    Create a new group
 // @route   POST /api/groups
@@ -163,6 +164,73 @@ exports.addParticipants = async (req, res, next) => {
 
     await group.save();
 
+    // Get admin/creator information for email notifications
+    const admin = await User.findById(req.user.id).select('name email');
+    const adminName = admin ? admin.name : 'Group Admin';
+
+    // Send email notifications to newly added participants who have email addresses
+    const emailPromises = [];
+    console.log(`[GROUP] 📧 Processing ${normalizedParticipants.length} participant(s) for email notifications`);
+    console.log(`[GROUP] Group: ${group.name}, Admin: ${adminName}`);
+    
+    for (const participant of normalizedParticipants) {
+      // Try to get email from participant's user reference
+      let participantEmail = null;
+      let participantName = participant.name;
+
+      console.log(`[GROUP] Processing participant: "${participantName}", has userId: ${participant.user ? 'Yes' : 'No'}`);
+
+      if (participant.user) {
+        try {
+          const participantUser = await User.findById(participant.user).select('email name');
+          if (participantUser) {
+            participantEmail = participantUser.email;
+            // Use user's name if available, otherwise use participant name
+            if (participantUser.name) {
+              participantName = participantUser.name;
+            }
+            console.log(`[GROUP] ✅ Found user for participant "${participantName}": email = ${participantEmail || 'NOT SET'}`);
+          } else {
+            console.log(`[GROUP] ⚠️  User not found for userId: ${participant.user}`);
+          }
+        } catch (userLookupError) {
+          console.error(`[GROUP] ❌ Error looking up user for participant:`, userLookupError);
+        }
+      } else {
+        console.log(`[GROUP] ⚠️  Participant "${participantName}" has no userId - cannot send email (participant not a registered user)`);
+        console.log(`[GROUP]    To send emails, participants must be added with userId (registered users)`);
+      }
+
+      // Send email if we have an email address
+      if (participantEmail) {
+        console.log(`[GROUP] 📤 Sending invitation email to: ${participantEmail} for participant: ${participantName}`);
+        emailPromises.push(
+          sendGroupInvitationEmail(
+            participantEmail,
+            participantName,
+            group.name,
+            adminName
+          ).then(() => {
+            console.log(`[GROUP] ✅ Successfully sent invitation email to: ${participantEmail}`);
+          }).catch((emailError) => {
+            // Log error but don't fail the request
+            console.error(`[GROUP] ❌ Error sending invitation email to ${participantEmail}:`, emailError.message || emailError);
+          })
+        );
+      } else {
+        console.log(`[GROUP] ⚠️  Skipping email for participant "${participantName}" - no email address available`);
+      }
+    }
+
+    // Send all emails in parallel (non-blocking)
+    if (emailPromises.length > 0) {
+      Promise.all(emailPromises).then(() => {
+        console.log(`[GROUP] Sent ${emailPromises.length} group invitation email(s) for group: ${group.name}`);
+      }).catch((error) => {
+        console.error('[GROUP] Error sending some invitation emails:', error);
+      });
+    }
+
     // Map participants to include id
     const participantsWithId = group.participants.map((p) => ({
       id: p._id.toString(),
@@ -273,6 +341,31 @@ exports.setCollectionDetails = async (req, res, next) => {
       });
     }
 
+    // Validate frequency - must be either 'MONTHLY' or 'WEEKLY'
+    if (frequency !== 'MONTHLY' && frequency !== 'WEEKLY') {
+      return res.status(400).json({
+        success: false,
+        message: 'Frequency must be either "MONTHLY" or "WEEKLY"',
+      });
+    }
+
+    // Validate collection date - must be between 1 and 31
+    const dateNum = parseInt(collectionDate);
+    if (isNaN(dateNum) || dateNum < 1 || dateNum > 31) {
+      return res.status(400).json({
+        success: false,
+        message: 'Collection date must be a number between 1 and 31',
+      });
+    }
+
+    // Validate amount - must be positive
+    if (amountPerPerson <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Amount per person must be greater than 0',
+      });
+    }
+
     const group = await Group.findById(groupId);
     if (!group) {
       return res.status(404).json({
@@ -291,7 +384,7 @@ exports.setCollectionDetails = async (req, res, next) => {
 
     group.amountPerPerson = amountPerPerson;
     group.frequency = frequency;
-    group.collectionDate = collectionDate;
+    group.collectionDate = dateNum;
 
     await group.save();
 
@@ -811,6 +904,22 @@ exports.getUserGroups = async (req, res, next) => {
   }
 };
 
+
+// @desc    Test collection notifications (manual trigger)
+// @route   POST /api/groups/test-collection-notifications
+// @access  Private
+exports.testCollectionNotifications = async (req, res, next) => {
+  try {
+    const { checkAndSendCollectionNotifications } = require('../services/schedulerService');
+    await checkAndSendCollectionNotifications();
+    res.status(200).json({
+      success: true,
+      message: 'Collection notification check completed. Check logs for details.',
+    });
+  } catch (err) {
+    next(err);
+  }
+};
 
 // @desc    Delete a group
 // @route   DELETE /api/groups/:groupId
