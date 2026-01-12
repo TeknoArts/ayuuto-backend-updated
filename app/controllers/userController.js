@@ -1,4 +1,5 @@
 const User = require('../models/User');
+const notificationService = require('../services/notificationService');
 
 // @desc    Register push notification token
 // @route   POST /api/users/push-token
@@ -131,31 +132,28 @@ exports.sendTestNotification = async (req, res, next) => {
     console.log(`   Title: ${title || 'Test Notification'}`);
     console.log(`   Body: ${body || 'This is a test notification from the backend'}`);
 
-    const firebaseService = require('../services/firebaseService');
-    
-    const results = await firebaseService.sendPushNotification(
+    const { notification, results } = await notificationService.sendNotificationToUser({
       userId,
-      title || 'Test Notification',
-      body || 'This is a test notification from the backend',
-      data || {}
-    );
+      title: title || 'Test Notification',
+      body: body || 'This is a test notification from the backend',
+      type: (data && data.type) || 'test',
+      data: data || {},
+    });
 
-    const successCount = results ? results.filter(r => r.success).length : 0;
+    const successCount = results ? results.filter((r) => r.success).length : 0;
     const totalCount = results ? results.length : 0;
 
-    if (successCount > 0) {
-      res.status(200).json({
-        success: true,
-        message: `Test notification sent successfully to ${successCount}/${totalCount} device(s)`,
-        results: results,
-      });
-    } else {
-      res.status(200).json({
-        success: false,
-        message: `Failed to send notification to any device. Check logs for details.`,
-        results: results,
-      });
-    }
+    res.status(200).json({
+      success: successCount > 0,
+      message:
+        successCount > 0
+          ? `Test notification sent successfully to ${successCount}/${totalCount} device(s)`
+          : 'Failed to send notification to any device. Check logs for details.',
+      data: {
+        notificationId: notification._id,
+        results,
+      },
+    });
   } catch (err) {
     console.error('❌ Error sending test notification:', err);
     next(err);
@@ -193,6 +191,43 @@ exports.getPushTokenInfo = async (req, res, next) => {
           createdAt: t.createdAt,
           isExpoToken: t.token.startsWith('ExponentPushToken['),
         })) : [],
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// @desc    Get list of users (for participant selection)
+// @route   GET /api/users
+// @access  Private
+exports.getUsers = async (req, res, next) => {
+  try {
+    const qRaw = req.query.q;
+    const q = typeof qRaw === 'string' ? qRaw.trim() : '';
+
+    const filter = q
+      ? {
+          $or: [
+            { name: { $regex: new RegExp(q, 'i') } },
+            { email: { $regex: new RegExp(q, 'i') } },
+          ],
+        }
+      : {};
+
+    const users = await User.find(filter)
+      .select('name email')
+      .sort({ name: 1 })
+      .limit(50);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        users: users.map((u) => ({
+          id: u._id,
+          name: u.name,
+          email: u.email,
+        })),
       },
     });
   } catch (err) {

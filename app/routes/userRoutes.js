@@ -1,12 +1,19 @@
 const express = require('express');
 const router = express.Router();
 const authMiddleware = require('../middleware/authMiddleware');
-const { registerPushToken, removePushToken, sendTestNotification, getPushTokenInfo } = require('../controllers/userController');
+const {
+  registerPushToken,
+  removePushToken,
+  sendTestNotification,
+  getPushTokenInfo,
+  getUsers,
+} = require('../controllers/userController');
 
 // All routes require authentication
 router.use(authMiddleware);
 
 // Routes
+router.get('/', getUsers);
 router.post('/push-token', registerPushToken);
 router.delete('/push-token', removePushToken);
 router.post('/test-notification', sendTestNotification); // Test endpoint for sending notifications

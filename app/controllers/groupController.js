@@ -1,6 +1,8 @@
 const Group = require('../models/Group');
 const Round = require('../models/Round');
-const { sendPushNotification } = require('../services/firebaseService');
+const PaymentLog = require('../models/PaymentLog');
+const User = require('../models/User');
+const notificationService = require('../services/notificationService');
 
 // @desc    Create a new group
 // @route   POST /api/groups
@@ -70,20 +72,94 @@ exports.addParticipants = async (req, res, next) => {
       });
     }
 
-    // Validate participant count
-    if (participants.length !== group.memberCount) {
+    // Validate participant count: allow partial adds, but never exceed memberCount
+    if (!participants || participants.length === 0) {
       return res.status(400).json({
         success: false,
-        message: `Number of participants must be ${group.memberCount}`,
+        message: 'At least one participant is required',
+      });
+    }
+
+    if (group.participants.length + participants.length > group.memberCount) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot add more than ${group.memberCount} participants to this group`,
       });
     }
 
     // Add participants
-    group.participants = participants.map((name) => ({
-      name: name.trim(),
-      order: null,
-      isPaid: false,
-    }));
+    // Supports:
+    // - legacy string array (names only)        [backwards compat]
+    // - objects with { userId }                 [preferred]
+    // - objects with { email }                  [we attempt to resolve to an existing user]
+    const normalizedParticipants = [];
+
+    for (const p of participants) {
+      if (typeof p === 'string') {
+        normalizedParticipants.push({
+          name: p.trim(),
+          order: null,
+          isPaid: false,
+        });
+        continue;
+      }
+
+      if (p && typeof p === 'object') {
+        let userId = p.userId || p.user || null;
+        let name = (p.name || '').trim();
+
+        // If no explicit userId but email provided, try to resolve an existing user
+        if (!userId && p.email) {
+          const email = String(p.email).trim().toLowerCase();
+          if (email) {
+            const existingUser = await User.findOne({ email });
+            if (existingUser) {
+              userId = existingUser._id;
+              if (!name) {
+                name = existingUser.name || existingUser.email || email;
+              }
+            } else if (!name) {
+              // Fallback: use email as name if no user found and name empty
+              name = email;
+            }
+          }
+        }
+
+        if (!name && (p.email || p.name)) {
+          name = String(p.name || p.email).trim();
+        }
+
+        // If we have a userId but still no name, denormalize from User
+        if (userId && !name) {
+          try {
+            const existingUser = await User.findById(userId).select('name email');
+            if (existingUser) {
+              name = existingUser.name || existingUser.email || String(existingUser._id);
+            }
+          } catch (lookupErr) {
+            console.error('Error looking up user for participant name:', lookupErr);
+          }
+        }
+
+        normalizedParticipants.push({
+          name,
+          user: userId,
+          order: null,
+          isPaid: false,
+        });
+        continue;
+      }
+
+      // Fallback: convert anything unexpected to a name string
+      normalizedParticipants.push({
+        name: String(p || '').trim(),
+        order: null,
+        isPaid: false,
+      });
+    }
+
+    // Append new participants to any existing participants
+    group.participants = [...group.participants, ...normalizedParticipants];
 
     await group.save();
 
@@ -104,6 +180,76 @@ exports.addParticipants = async (req, res, next) => {
         group: {
           id: group._id,
           participants: participantsWithId,
+        },
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// @desc    Remove a participant from a group
+// @route   DELETE /api/groups/:groupId/participants/:participantId
+// @access  Private
+exports.removeParticipant = async (req, res, next) => {
+  try {
+    const { groupId, participantId } = req.params;
+
+    const group = await Group.findById(groupId);
+    if (!group) {
+      return res.status(404).json({
+        success: false,
+        message: 'Group not found',
+      });
+    }
+
+    // Only the group owner can modify participants
+    if (group.createdBy.toString() !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to modify this group',
+      });
+    }
+
+    // If order is already set, do not allow removal (would break rounds/order)
+    if (group.isOrderSet) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot remove participants after order has been set',
+      });
+    }
+
+    const participant = group.participants.id(participantId);
+    if (!participant) {
+      return res.status(404).json({
+        success: false,
+        message: 'Participant not found',
+      });
+    }
+
+    // Remove the subdocument
+    participant.remove();
+
+    await group.save();
+
+    // Map remaining participants to include id
+    const participantsWithId = group.participants.map((p) => ({
+      id: p._id.toString(),
+      name: p.name,
+      order: p.order,
+      isPaid: p.isPaid,
+      paidAt: p.paidAt,
+      hasReceivedPayment: p.hasReceivedPayment || false,
+      receivedPaymentAt: p.receivedPaymentAt,
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: {
+        group: {
+          id: group._id,
+          participants: participantsWithId,
+          memberCount: group.memberCount,
         },
       },
     });
@@ -176,7 +322,9 @@ exports.getGroupDetails = async (req, res, next) => {
   try {
     const { groupId } = req.params;
 
-    const group = await Group.findById(groupId).populate('createdBy', 'name email');
+    const group = await Group.findById(groupId)
+      .populate('createdBy', 'name email')
+      .populate('participants.user', 'name email');
 
     if (!group) {
       return res.status(404).json({
@@ -187,9 +335,14 @@ exports.getGroupDetails = async (req, res, next) => {
 
     // Check if user is authorized (owner or participant)
     const isOwner = group.createdBy._id.toString() === req.user.id;
-    const isParticipant = group.participants.some(
-      (p) => p.name.toLowerCase() === req.user.name.toLowerCase()
-    );
+    const isParticipant = group.participants.some((p) => {
+      const byUserId = p.user && p.user.toString() === req.user.id;
+      const byName =
+        typeof p.name === 'string' &&
+        typeof req.user.name === 'string' &&
+        p.name.toLowerCase() === req.user.name.toLowerCase();
+      return byUserId || byName;
+    });
 
     if (!isOwner && !isParticipant) {
       return res.status(403).json({
@@ -212,16 +365,36 @@ exports.getGroupDetails = async (req, res, next) => {
       ? sortedParticipants[group.currentRecipientIndex]
       : null;
 
-    // Map participants to include id
-    const participantsWithId = sortedParticipants.map((p) => ({
-      id: p._id.toString(),
-      name: p.name,
-      order: p.order,
-      isPaid: p.isPaid,
-      paidAt: p.paidAt,
-      hasReceivedPayment: p.hasReceivedPayment || false,
-      receivedPaymentAt: p.receivedPaymentAt,
-    }));
+    // Map participants to include id and populated user info (if any)
+    const participantsWithId = sortedParticipants.map((p) => {
+      const hasPopulatedUser = p.user && typeof p.user === 'object' && p.user._id;
+      const userId = hasPopulatedUser
+        ? p.user._id.toString()
+        : p.user
+        ? p.user.toString()
+        : null;
+
+      const user =
+        hasPopulatedUser
+          ? {
+              id: p.user._id.toString(),
+              name: p.user.name,
+              email: p.user.email,
+            }
+          : null;
+
+      return {
+        id: p._id.toString(),
+        name: p.name,
+        order: p.order,
+        isPaid: p.isPaid,
+        paidAt: p.paidAt,
+        hasReceivedPayment: p.hasReceivedPayment || false,
+        receivedPaymentAt: p.receivedPaymentAt,
+        userId,
+        user,
+      };
+    });
 
     // Calculate total savings
     const totalSavings = group.amountPerPerson && group.memberCount 
@@ -288,11 +461,18 @@ exports.spinForOrder = async (req, res, next) => {
       });
     }
 
-    // Check if participants are added
+    // Check if participants are added and complete
     if (group.participants.length === 0) {
       return res.status(400).json({
         success: false,
         message: 'Please add participants before spinning',
+      });
+    }
+
+    if (group.participants.length !== group.memberCount) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please add all participants before spinning',
       });
     }
 
@@ -421,23 +601,50 @@ exports.updatePaymentStatus = async (req, res, next) => {
 
     await group.save();
 
-    // Send push notification to group owner when payment is marked as paid
     if (isPaid) {
+      // Append payment log for this contribution into the current round
       try {
-        await sendPushNotification(
-          group.createdBy,
-          'Payment Received',
-          `${participant.name} has marked their payment as complete in ${group.name}`,
-          {
+        // Find the current round (prefer IN_PROGRESS, fallback to highest roundNumber)
+        let currentRound = await Round.findOne({
+          group: group._id,
+          status: 'IN_PROGRESS',
+        });
+
+        if (!currentRound) {
+          currentRound = await Round.findOne({ group: group._id }).sort({ roundNumber: -1 });
+        }
+
+        if (currentRound) {
+          await PaymentLog.create({
+            group: group._id,
+            round: currentRound._id,
+            participantId: participant._id,
+            amount: group.amountPerPerson || 0,
+            paidBy: req.user.id,
+            method: 'OTHER',
+          });
+        }
+      } catch (logError) {
+        console.error('Error creating payment log entry:', logError);
+      }
+
+      // Store notification + send push to group owner when payment is marked as paid
+      try {
+        await notificationService.sendNotificationToUser({
+          userId: group.createdBy,
+          title: 'Payment Received',
+          body: `${participant.name} has marked their payment as complete in ${group.name}`,
+          type: 'payment',
+          data: {
             type: 'payment',
             groupId: group._id.toString(),
             participantId: participant._id.toString(),
             participantName: participant.name,
-          }
-        );
+          },
+        });
       } catch (notificationError) {
         // Don't fail the request if notification fails
-        console.error('Error sending payment notification:', notificationError);
+        console.error('Error sending/storing payment notification:', notificationError);
       }
     }
 
@@ -450,6 +657,84 @@ exports.updatePaymentStatus = async (req, res, next) => {
           isPaid: participant.isPaid,
           paidAt: participant.paidAt,
         },
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// @desc    Get payment logs for a group
+// @route   GET /api/groups/:groupId/logs
+// @access  Private (owner or participant)
+exports.getGroupLogs = async (req, res, next) => {
+  try {
+    const { groupId } = req.params;
+
+    const group = await Group.findById(groupId).populate('createdBy', 'name email');
+    if (!group) {
+      return res.status(404).json({
+        success: false,
+        message: 'Group not found',
+      });
+    }
+
+    // Authorize: user must be owner or participant
+    const isOwner = group.createdBy._id.toString() === req.user.id;
+    const isParticipant = group.participants.some((p) => {
+      const byUserId = p.user && p.user.toString() === req.user.id;
+      const byName =
+        typeof p.name === 'string' &&
+        typeof req.user.name === 'string' &&
+        p.name.toLowerCase() === req.user.name.toLowerCase();
+      return byUserId || byName;
+    });
+
+    if (!isOwner && !isParticipant) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to view logs for this group',
+      });
+    }
+
+    // Load payment logs for group, newest first
+    const logs = await PaymentLog.find({ group: groupId })
+      .populate('round', 'roundNumber')
+      .populate('paidBy', 'name email')
+      .sort({ paidAt: -1, createdAt: -1 });
+
+    // Map participant ids to names
+    const participantNameById = new Map();
+    group.participants.forEach((p) => {
+      participantNameById.set(p._id.toString(), p.name);
+    });
+
+    const mappedLogs = logs.map((log) => ({
+      id: log._id.toString(),
+      type: 'payment',
+      groupId: group._id.toString(),
+      participantId: log.participantId ? log.participantId.toString() : null,
+      participantName: log.participantId
+        ? participantNameById.get(log.participantId.toString()) || null
+        : null,
+      amount: log.amount,
+      roundNumber: log.round && typeof log.round.roundNumber === 'number'
+        ? log.round.roundNumber
+        : null,
+      paidBy: log.paidBy
+        ? {
+            id: log.paidBy._id.toString(),
+            name: log.paidBy.name,
+          }
+        : null,
+      paidAt: log.paidAt,
+      createdAt: log.createdAt,
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: {
+        logs: mappedLogs,
       },
     });
   } catch (err) {
@@ -484,6 +769,7 @@ exports.getUserGroups = async (req, res, next) => {
     const groups = await Group.find({
       $or: [
         { createdBy: userId },
+        { 'participants.user': userId },
         { 'participants.name': { $regex: new RegExp(userName, 'i') } },
       ],
     })
@@ -691,33 +977,35 @@ exports.nextRound = async (req, res, next) => {
       rounds = await Round.find({ group: group._id }).sort({ roundNumber: 1 });
     }
 
-    // Send push notifications
+    // Store notifications + send push
     try {
       if (allNowPaidOut) {
-        await sendPushNotification(
-          group.createdBy,
-          'Ayuuto Completed! 🎉',
-          `All members of ${group.name} have received their payments. The group is now complete!`,
-          {
+        await notificationService.sendNotificationToUser({
+          userId: group.createdBy,
+          title: 'Ayuuto Completed! 🎉',
+          body: `All members of ${group.name} have received their payments. The group is now complete!`,
+          type: 'group_completed',
+          data: {
             type: 'group_completed',
             groupId: group._id.toString(),
-          }
-        );
+          },
+        });
       } else if (nextRecipient && currentRoundDoc) {
-        await sendPushNotification(
-          group.createdBy,
-          'Next Round Started',
-          `Round ${currentRoundDoc.roundNumber} has started. ${nextRecipient.name} is now the recipient.`,
-          {
+        await notificationService.sendNotificationToUser({
+          userId: group.createdBy,
+          title: 'Next Round Started',
+          body: `Round ${currentRoundDoc.roundNumber} has started. ${nextRecipient.name} is now the recipient.`,
+          type: 'next_round',
+          data: {
             type: 'next_round',
             groupId: group._id.toString(),
             recipientName: nextRecipient.name,
             roundNumber: currentRoundDoc.roundNumber.toString(),
-          }
-        );
+          },
+        });
       }
     } catch (notificationError) {
-      console.error('Error sending next round notification:', notificationError);
+      console.error('Error sending/storing next round notification:', notificationError);
     }
 
     // Get updated sorted participants
