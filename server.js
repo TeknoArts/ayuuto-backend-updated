@@ -73,7 +73,11 @@ const HOST = process.env.HOST || '0.0.0.0'; // Listen on all interfaces
 
 app.listen(PORT, HOST, () => {
   console.log(`Server is running on http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
-  console.log(`Server accessible from network at: http://192.168.18.122:${PORT}`);
+  if (process.env.NODE_ENV === 'production') {
+    console.log(`Production server running on port ${PORT}`);
+  } else {
+    console.log(`Development server accessible from network at: http://192.168.18.122:${PORT}`);
+  }
 });
 
 

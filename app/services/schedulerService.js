@@ -71,13 +71,28 @@ async function checkAndSendCollectionNotifications() {
           }
         }
 
-        // Get ONLY participants who are in this specific group (not all app users)
-        // IMPORTANT: Only send to users who are ACTUALLY participants in this group
+        // ============================================
+        // SECURITY: Get ONLY participants who are in this specific group
+        // CRITICAL SECURITY RULES:
+        // 1. We ONLY send to users who are ACTUALLY participants in this group
+        // 2. We NEVER send to all app users
+        // 3. We ONLY use USER ID to identify users - NEVER device ID or device name
+        // 4. Device names (like "Redmi Note 9S") are NOT unique - multiple users can have same device name
+        // 5. We iterate ONLY through group.participants - NOT all users in the database
+        // 6. We NEVER query: User.find({ 'pushTokens.deviceId': ... }) or similar device-based queries
+        // ============================================
         const participantUserIds = [];
         const participantNames = [];
         const userIdsSet = new Set(); // Use Set to prevent duplicates
         
+        console.log(`[SCHEDULER] 🔒 SECURITY: Collecting ONLY participants from group "${group.name}"`);
+        console.log(`[SCHEDULER] 🔒 CRITICAL: Using USER ID only - NOT device ID or device name`);
+        console.log(`[SCHEDULER] 🔒 CRITICAL: Device names are NOT unique - we NEVER query by device name`);
+        console.log(`[SCHEDULER] 🔒 Total participants in this group: ${group.participants.length}`);
+        
         // Only include participants who have userId (registered users in this group)
+        // CRITICAL: We iterate ONLY through group.participants - NOT all users in the database
+        // CRITICAL: We use USER ID (unique MongoDB ObjectId) - NEVER device ID or device name (not unique)
         group.participants.forEach((participant) => {
           if (participant.user) {
             // Handle both ObjectId and populated user object
@@ -90,10 +105,16 @@ async function checkAndSendCollectionNotifications() {
               participantUserIds.push(userId);
               participantNames.push(userName);
               userIdsSet.add(userIdString);
-              console.log(`[SCHEDULER]   ✅ Participant in group: ${userName} (userId: ${userIdString})`);
+              console.log(`[SCHEDULER]   ✅ Participant in THIS group only: ${userName} (userId: ${userIdString})`);
+              console.log(`[SCHEDULER]   🔒 Using USER ID: ${userIdString} - NOT device name or device ID`);
             }
+          } else {
+            console.log(`[SCHEDULER]   ⚠️  Participant "${participant.name}" has no userId - skipping (not a registered user)`);
           }
         });
+        
+        console.log(`[SCHEDULER] 🔒 SECURITY: Found ${participantUserIds.length} registered user(s) who are participants of THIS group only`);
+        console.log(`[SCHEDULER] 🔒 SECURITY: All users identified by USER ID only - NOT by device name/ID`);
 
         // Also include the group creator ONLY if they are not already in participants list
         const creatorId = group.createdBy._id ? group.createdBy._id : group.createdBy;
@@ -135,15 +156,20 @@ async function checkAndSendCollectionNotifications() {
           console.log(`[SCHEDULER]   ${index + 1}. ${name}`);
         });
 
-        // Send notifications ONLY to participants in this group
-        // SECURITY: Final verification before sending - ensure user is actually in this group
-        console.log(`[SCHEDULER] 🔒 Security Check: Verifying all ${participantUserIds.length} user(s) are in group "${group.name}"`);
+        // ============================================
+        // SECURITY: Send notifications ONLY to participants in this group
+        // CRITICAL: Final verification before sending - ensure user is actually in this group
+        // We NEVER send to all users - only to verified participants of THIS specific group
+        // ============================================
+        console.log(`[SCHEDULER] 🔒 SECURITY CHECK: Verifying all ${participantUserIds.length} user(s) are participants of group "${group.name}"`);
+        console.log(`[SCHEDULER] 🔒 IMPORTANT: We are NOT sending to all app users - ONLY to participants of this group`);
         
         const notificationPromises = participantUserIds.map((userId, index) => {
           const userName = participantNames[index] || 'User';
           const userIdString = userId.toString();
           
-          // Final verification: Check if this user is actually in this group
+          // CRITICAL: Final verification - Check if this user is actually in this group
+          // We verify by checking if userId exists in group.participants array
           const isParticipant = group.participants.some((p) => {
             if (!p.user) return false;
             const pUserId = p.user._id ? p.user._id : p.user;
@@ -153,14 +179,19 @@ async function checkAndSendCollectionNotifications() {
           const isCreator = creatorIdString && creatorIdString === userIdString;
           
           if (!isParticipant && !isCreator) {
-            console.error(`[SCHEDULER] ❌ SECURITY ERROR: User ${userName} (${userIdString}) is NOT in group "${group.name}" - SKIPPING`);
+            console.error(`[SCHEDULER] ❌❌❌ SECURITY ERROR: User ${userName} (${userIdString}) is NOT in group "${group.name}" - SKIPPING`);
+            console.error(`[SCHEDULER] ❌❌❌ This should NEVER happen - user was not verified as participant or creator`);
             return Promise.resolve(null);
           }
           
-          console.log(`[SCHEDULER] 📱 Sending notification to: ${userName} (${userIdString}) - ${isParticipant ? 'Participant' : 'Creator'}`);
+          console.log(`[SCHEDULER] 📱 Sending notification to: ${userName} (${userIdString}) - ${isParticipant ? 'Participant' : 'Creator'} of THIS group only`);
           
+          // Send notification to THIS specific user only (not all users)
+          // CRITICAL: We use userIdString (unique user ID) - NOT device ID or device name
+          // Device names like "Redmi Note 9S" are NOT unique - multiple users can have same device name
+          // We ALWAYS use User.findById(userId) - NEVER User.find({ deviceId: ... })
           return notificationService.sendNotificationToUser({
-            userId: userIdString,
+            userId: userIdString, // CRITICAL: Only this specific userId - NOT device ID, NOT device name, NOT all users
             title,
             body,
             type: 'collection_reminder',
@@ -173,7 +204,8 @@ async function checkAndSendCollectionNotifications() {
               frequency: group.frequency,
             },
           }).then(() => {
-            console.log(`[SCHEDULER] ✅ Notification sent to: ${userName} (verified as ${isParticipant ? 'participant' : 'creator'})`);
+            console.log(`[SCHEDULER] ✅ Notification sent to: ${userName} (userId: ${userIdString}) - verified as ${isParticipant ? 'participant' : 'creator'} of THIS group`);
+            console.log(`[SCHEDULER] 🔒 SECURITY: Sent using USER ID only - NOT device name/ID`);
           }).catch((error) => {
             console.error(`[SCHEDULER] ❌ Error sending notification to ${userName} (${userIdString}):`, error.message || error);
             return null;
@@ -187,6 +219,8 @@ async function checkAndSendCollectionNotifications() {
         await group.save();
 
         console.log(`[SCHEDULER] ✅ Successfully sent collection notifications for group: ${group.name}`);
+        console.log(`[SCHEDULER] 🔒 SECURITY CONFIRMED: Notifications sent ONLY to ${participantUserIds.length} participant(s) of THIS group`);
+        console.log(`[SCHEDULER] 🔒 SECURITY CONFIRMED: NO notifications were sent to users outside this group`);
       } catch (groupError) {
         console.error(`[SCHEDULER] Error processing group ${group.name}:`, groupError);
       }

@@ -172,6 +172,11 @@ async function sendExpoPushNotification(token, title, body, data = {}) {
 exports.sendPushNotification = async (userId, title, body, data = {}) => {
   try {
     const User = require('../models/User');
+    
+    // CRITICAL SECURITY: We ALWAYS use User.findById(userId) - NEVER query by device ID or device name
+    // Device names like "Redmi Note 9S" are NOT unique - multiple users can have the same device name
+    // We MUST use userId (unique MongoDB ObjectId) to identify users
+    // NEVER use: User.find({ 'pushTokens.deviceId': ... }) or similar device-based queries
     const user = await User.findById(userId).select('pushTokens');
 
     if (!user) {

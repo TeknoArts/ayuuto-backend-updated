@@ -82,31 +82,45 @@ const sendEmailViaSendGrid = async ({ to, subject, html, text }) => {
     // Enhanced error handling for SendGrid errors
     console.error(`❌ [SendGrid] Error sending email to ${to}:`);
     console.error(`   Error: ${error.message}`);
+    console.error(`   Error Code: ${error.code || 'N/A'}`);
+    
+    // Check error code (SendGrid uses error.code for status codes)
+    const statusCode = error.code || error.response?.statusCode;
     
     if (error.response) {
-      const { statusCode, body } = error.response;
+      const { body } = error.response;
       console.error(`   Status Code: ${statusCode}`);
-      console.error(`   Response Body:`, JSON.stringify(body, null, 2));
-      
-      // Provide helpful error messages based on status code
-      if (statusCode === 403 || error.message.includes('Forbidden')) {
-        const errorMsg = `SendGrid Forbidden Error: The sender email "noreply@ayuuto.com" is not verified in SendGrid.\n\n` +
-          `To fix this:\n` +
-          `1. Go to: https://app.sendgrid.com/settings/sender_auth\n` +
-          `2. Click "Verify a Single Sender"\n` +
-          `3. Enter: noreply@ayuuto.com\n` +
-          `4. Fill in all required fields\n` +
-          `5. Verify the email address\n` +
-          `6. Wait for SendGrid approval\n\n` +
-          `Alternatively, verify your domain "ayuuto.com" for better deliverability.`;
-        throw new Error(errorMsg);
-      } else if (statusCode === 401) {
-        throw new Error(`SendGrid Authentication Error: Invalid API key. Check your SENDGRID_API_KEY in .env file.`);
-      } else if (statusCode === 400) {
-        const errors = body?.errors || [];
-        const errorDetails = errors.map(e => `- ${e.field}: ${e.message}`).join('\n');
-        throw new Error(`SendGrid Validation Error:\n${errorDetails}`);
+      if (body) {
+        console.error(`   Response Body:`, JSON.stringify(body, null, 2));
       }
+    }
+    
+    // Provide helpful error messages based on status code
+    if (statusCode === 401 || error.code === 401) {
+      const errorMsg = `SendGrid Authentication Error (401): Invalid or missing API key.\n\n` +
+        `To fix this:\n` +
+        `1. Go to: https://app.sendgrid.com/settings/api_keys\n` +
+        `2. Create a new API key with "Full Access" or "Mail Send" permissions\n` +
+        `3. Copy the API key (you'll only see it once!)\n` +
+        `4. Update your .env file: SENDGRID_API_KEY=your_actual_api_key_here\n` +
+        `5. Restart your backend server\n\n` +
+        `Current .env value: ${process.env.SENDGRID_API_KEY ? 'Set (but invalid)' : 'NOT SET'}`;
+      throw new Error(errorMsg);
+    } else if (statusCode === 403 || error.code === 403 || error.message.includes('Forbidden')) {
+      const errorMsg = `SendGrid Forbidden Error: The sender email "${senderEmail}" is not verified in SendGrid.\n\n` +
+        `To fix this:\n` +
+        `1. Go to: https://app.sendgrid.com/settings/sender_auth\n` +
+        `2. Click "Verify a Single Sender"\n` +
+        `3. Enter: ${senderEmail}\n` +
+        `4. Fill in all required fields\n` +
+        `5. Verify the email address\n` +
+        `6. Wait for SendGrid approval\n\n` +
+        `Alternatively, verify your domain "ayuuto.com" for better deliverability.`;
+      throw new Error(errorMsg);
+    } else if (statusCode === 400 || error.code === 400) {
+      const errors = error.response?.body?.errors || [];
+      const errorDetails = errors.map(e => `- ${e.field || 'Unknown'}: ${e.message || 'Unknown error'}`).join('\n');
+      throw new Error(`SendGrid Validation Error:\n${errorDetails || error.message}`);
     }
     
     // Re-throw with original error if we can't provide better context
@@ -166,12 +180,24 @@ const sendEmailViaSMTP = async ({ to, subject, html, text }) => {
 exports.sendEmail = async ({ to, subject, html, text }) => {
   try {
     // Priority 1: SendGrid (best for production)
-    if (process.env.SENDGRID_API_KEY) {
-      return await sendEmailViaSendGrid({ to, subject, html, text });
+    // Only use SendGrid if API key is set AND not a placeholder
+    if (process.env.SENDGRID_API_KEY && 
+        process.env.SENDGRID_API_KEY !== 'your_sendgrid_api_key_here' &&
+        process.env.SENDGRID_API_KEY.trim().length > 10) {
+      try {
+        return await sendEmailViaSendGrid({ to, subject, html, text });
+      } catch (sendGridError) {
+        // If SendGrid fails (401, etc.), fall back to other services
+        console.warn('⚠️ [Email] SendGrid failed, falling back to alternative email service...');
+        console.warn(`   Error: ${sendGridError.message}`);
+      }
     }
 
     // Priority 2: Gmail SMTP
-    if (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
+    if (process.env.GMAIL_USER && 
+        process.env.GMAIL_APP_PASSWORD &&
+        process.env.GMAIL_USER !== 'your-email@gmail.com' &&
+        process.env.GMAIL_APP_PASSWORD !== 'your_16_character_app_password') {
       return await sendEmailViaSMTP({ to, subject, html, text });
     }
 
@@ -182,10 +208,10 @@ exports.sendEmail = async ({ to, subject, html, text }) => {
 
     // No email service configured
     console.error('❌ Email service not configured.');
-    console.error('   For SendGrid: Set SENDGRID_API_KEY in .env');
-    console.error('   For Gmail: Set GMAIL_USER and GMAIL_APP_PASSWORD in .env');
+    console.error('   For SendGrid: Set SENDGRID_API_KEY in .env (currently invalid/placeholder)');
+    console.error('   For Gmail: Set GMAIL_USER and GMAIL_APP_PASSWORD in .env (currently placeholder)');
     console.error('   For Mailtrap: Set MAILTRAP_USER and MAILTRAP_PASS in .env');
-    throw new Error('Email service not configured');
+    throw new Error('Email service not configured. Please set up Gmail SMTP or SendGrid in .env file.');
   } catch (error) {
     console.error('❌ Error sending email:', error);
     throw error;

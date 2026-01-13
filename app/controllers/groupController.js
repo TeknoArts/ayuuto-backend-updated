@@ -427,7 +427,7 @@ exports.getGroupDetails = async (req, res, next) => {
     }
 
     // Check if user is authorized (owner or participant)
-    const isOwner = group.createdBy._id.toString() === req.user.id;
+    const isOwner = group.createdBy && group.createdBy._id && group.createdBy._id.toString() === req.user.id;
     const isParticipant = group.participants.some((p) => {
       const byUserId = p.user && p.user.toString() === req.user.id;
       const byName =
@@ -509,9 +509,12 @@ exports.getGroupDetails = async (req, res, next) => {
           isOrderSet: group.isOrderSet,
           currentRecipient: currentRecipient ? currentRecipient.name : null,
           currentRecipientIndex: group.currentRecipientIndex,
-          createdBy: {
-            id: group.createdBy._id,
-            name: group.createdBy.name,
+          createdBy: group.createdBy && group.createdBy._id ? {
+            id: group.createdBy._id.toString(),
+            name: group.createdBy.name || 'Unknown',
+          } : {
+            id: null,
+            name: 'Deleted User',
           },
           status: group.status,
           createdAt: group.createdAt,
@@ -773,7 +776,7 @@ exports.getGroupLogs = async (req, res, next) => {
     }
 
     // Authorize: user must be owner or participant
-    const isOwner = group.createdBy._id.toString() === req.user.id;
+    const isOwner = group.createdBy && group.createdBy._id && group.createdBy._id.toString() === req.user.id;
     const isParticipant = group.participants.some((p) => {
       const byUserId = p.user && p.user.toString() === req.user.id;
       const byName =
@@ -867,6 +870,7 @@ exports.getUserGroups = async (req, res, next) => {
       ],
     })
       .populate('createdBy', 'name email')
+      .populate('participants.user', 'name email')
       .sort({ createdAt: -1 });
 
     console.log('Groups found for user:', groups.length);
@@ -880,10 +884,83 @@ exports.getUserGroups = async (req, res, next) => {
             ? group.amountPerPerson * group.memberCount 
             : 0;
           
+          // Handle null createdBy (user might have been deleted)
+          // Safely check if createdBy exists and has _id
+          let createdBy;
+          try {
+            if (group.createdBy && typeof group.createdBy === 'object') {
+              // Check if it's a populated user object with _id
+              if (group.createdBy._id && typeof group.createdBy._id === 'object') {
+                // CreatedBy is populated and has _id
+                createdBy = {
+                  id: group.createdBy._id.toString(),
+                  name: group.createdBy.name || 'Unknown',
+                };
+              } else if (group.createdBy.toString && typeof group.createdBy.toString === 'function') {
+                // CreatedBy is an ObjectId (not populated) - has toString method
+                createdBy = {
+                  id: group.createdBy.toString(),
+                  name: 'Unknown',
+                };
+              } else {
+                // CreatedBy object exists but is invalid (user was deleted)
+                createdBy = {
+                  id: null,
+                  name: 'Deleted User',
+                };
+              }
+            } else {
+              // CreatedBy is null or invalid (user was deleted)
+              createdBy = {
+                id: null,
+                name: 'Deleted User',
+              };
+            }
+          } catch (error) {
+            // Fallback if anything goes wrong
+            console.error('Error processing createdBy for group:', group.name, error);
+            createdBy = {
+              id: null,
+              name: 'Deleted User',
+            };
+          }
+          
+          // Map participants to include id and populated user info (if any)
+          const participantsWithId = (group.participants || []).map((p) => {
+            const hasPopulatedUser = p.user && typeof p.user === 'object' && p.user._id;
+            const userId = hasPopulatedUser
+              ? p.user._id.toString()
+              : p.user
+              ? p.user.toString()
+              : null;
+
+            const user =
+              hasPopulatedUser
+                ? {
+                    id: p.user._id.toString(),
+                    name: p.user.name,
+                    email: p.user.email,
+                  }
+                : null;
+
+            return {
+              id: p._id.toString(),
+              name: p.name,
+              order: p.order,
+              isPaid: p.isPaid,
+              paidAt: p.paidAt,
+              hasReceivedPayment: p.hasReceivedPayment || false,
+              receivedPaymentAt: p.receivedPaymentAt,
+              userId,
+              user,
+            };
+          });
+          
           return {
             id: group._id,
             name: group.name,
             memberCount: group.memberCount,
+            participants: participantsWithId,
             amountPerPerson: group.amountPerPerson,
             totalSavings: totalSavings,
             frequency: group.frequency,
@@ -891,10 +968,7 @@ exports.getUserGroups = async (req, res, next) => {
             isOrderSet: group.isOrderSet,
             status: group.status,
             createdAt: group.createdAt,
-            createdBy: {
-              id: group.createdBy._id,
-              name: group.createdBy.name,
-            },
+            createdBy: createdBy,
           };
         }),
       },
@@ -928,7 +1002,7 @@ exports.deleteGroup = async (req, res, next) => {
   try {
     const { groupId } = req.params;
 
-    const group = await Group.findById(groupId);
+    const group = await Group.findById(groupId).populate('participants.user', 'id');
     if (!group) {
       return res.status(404).json({
         success: false,
@@ -936,8 +1010,20 @@ exports.deleteGroup = async (req, res, next) => {
       });
     }
 
-    // Check if user owns the group
-    if (group.createdBy.toString() !== req.user.id) {
+    // Check if user owns the group OR is a participant in the group
+    const isOwner = group.createdBy.toString() === req.user.id;
+    const isParticipant = group.participants && group.participants.some((p) => {
+      if (p.user && typeof p.user === 'object' && p.user._id) {
+        // User is populated
+        return p.user._id.toString() === req.user.id;
+      } else if (p.user) {
+        // User is an ObjectId
+        return p.user.toString() === req.user.id;
+      }
+      return false;
+    });
+    
+    if (!isOwner && !isParticipant) {
       return res.status(403).json({
         success: false,
         message: 'Not authorized to delete this group',
