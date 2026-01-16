@@ -10,6 +10,9 @@ exports.serveGroupView = (req, res) => {
     let { shareCode } = req.params;
     shareCode = decodeURIComponent(shareCode);
     
+    // Normalize shareCode to uppercase (share codes are stored in uppercase)
+    shareCode = shareCode.toUpperCase().trim();
+    
     console.log(`[WebView] Serving group view for shareCode: ${shareCode}`);
 
     // Get the current host and protocol
@@ -660,8 +663,16 @@ async function loadGroup() {
         });
 
         if (!response.ok) {
-            const errorData = await response.json().catch(() => ({ message: 'Unknown error occurred' }));
-            throw new Error(errorData.message || \`Failed to load group (Status: \${response.status})\`);
+            let errorMessage = 'Unknown error occurred';
+            try {
+                const errorData = await response.json();
+                errorMessage = errorData.message || errorData.error || \`Failed to load group (Status: \${response.status})\`;
+                console.error('API Error Response:', errorData);
+            } catch (e) {
+                errorMessage = \`Failed to load group (Status: \${response.status})\`;
+                console.error('Failed to parse error response:', e);
+            }
+            throw new Error(errorMessage);
         }
 
         const data = await response.json();

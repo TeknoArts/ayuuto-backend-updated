@@ -11,6 +11,9 @@ exports.viewGroupByShareCode = async (req, res, next) => {
     let { shareCode } = req.params;
     shareCode = decodeURIComponent(shareCode);
     
+    // Normalize shareCode - convert to uppercase (share codes are stored in uppercase)
+    shareCode = shareCode.toUpperCase().trim();
+    
     console.log(`[PublicGroup] Viewing group with shareCode: ${shareCode}`);
 
     if (!shareCode) {
@@ -20,7 +23,7 @@ exports.viewGroupByShareCode = async (req, res, next) => {
       });
     }
 
-    // Find group by shareCode (no token needed in URL)
+    // Find group by shareCode (normalized to uppercase - share codes are stored in uppercase)
     const group = await Group.findOne({ shareCode })
       .populate('createdBy', 'name email')
       .populate('participants.user', 'name email');
