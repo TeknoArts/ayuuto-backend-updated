@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const User = require('../models/User');
+const Group = require('../models/Group');
 const { sendPasswordResetEmail, sendWelcomeEmail } = require('../services/emailService');
 
 // Helper to create JWT
@@ -23,7 +24,13 @@ exports.register = async (req, res, next) => {
       });
     }
 
-    const existingUser = await User.findOne({ email });
+    // Normalize email for lookup
+    const normalizedEmail = email.toLowerCase().trim();
+    
+    // Check if user exists (case-insensitive)
+    const existingUser = await User.findOne({ 
+      email: { $regex: new RegExp(`^${normalizedEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
+    });
     if (existingUser) {
       return res.status(409).json({
         success: false,
@@ -31,8 +38,64 @@ exports.register = async (req, res, next) => {
       });
     }
 
-    const user = await User.create({ name, email, password });
+    // Create user with normalized email
+    const user = await User.create({ name, email: normalizedEmail, password });
     const token = generateToken(user._id);
+
+    // Link existing groups: Find all groups where this email exists as a non-registered participant
+    // and link them to the new user account
+    try {
+      console.log(`[AUTH] 🔗 Linking existing groups for new user: ${normalizedEmail}`);
+      
+      // Find all groups where any participant has this email
+      // We'll filter in code to ensure the participant has no user linked
+      const groupsToLink = await Group.find({
+        'participants.email': { $regex: new RegExp(`^${normalizedEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+      });
+
+      if (groupsToLink.length > 0) {
+        console.log(`[AUTH] ✅ Found ${groupsToLink.length} group(s) with matching email`);
+        
+        let linkedCount = 0;
+        // Update each group to link the participant to the new user
+        for (const group of groupsToLink) {
+          let updated = false;
+          for (const participant of group.participants) {
+            // Match by email (case-insensitive) and ensure no user is already linked
+            if (
+              participant.email &&
+              participant.email.toLowerCase() === normalizedEmail &&
+              !participant.user
+            ) {
+              participant.user = user._id;
+              // Update participant name if it's just the email (use the new user's name)
+              if (participant.name === participant.email || participant.name.toLowerCase() === normalizedEmail) {
+                participant.name = user.name;
+              }
+              updated = true;
+              linkedCount++;
+              console.log(`[AUTH]   ✅ Linked participant "${participant.name}" in group "${group.name}"`);
+            }
+          }
+          
+          if (updated) {
+            await group.save();
+            console.log(`[AUTH]   ✅ Saved group "${group.name}"`);
+          }
+        }
+        
+        if (linkedCount > 0) {
+          console.log(`[AUTH] ✅ Successfully linked ${linkedCount} participant(s) in ${groupsToLink.length} group(s) to new user account`);
+        } else {
+          console.log(`[AUTH] ℹ️  Found groups but all participants already have users linked`);
+        }
+      } else {
+        console.log(`[AUTH] ℹ️  No existing groups found for email: ${normalizedEmail}`);
+      }
+    } catch (linkError) {
+      // Don't fail registration if linking fails - just log it
+      console.error(`[AUTH] ⚠️  Error linking existing groups:`, linkError);
+    }
 
     // Send welcome email (non-blocking)
     sendWelcomeEmail(user.email, user.name).catch((err) => {
@@ -62,6 +125,9 @@ exports.login = async (req, res, next) => {
   try {
     const { email, password } = req.body;
 
+    console.log(`[AUTH] Login request received`);
+    console.log(`[AUTH] Email from request: ${email}`);
+
     if (!email || !password) {
       return res.status(400).json({
         success: false,
@@ -69,23 +135,58 @@ exports.login = async (req, res, next) => {
       });
     }
 
-    const user = await User.findOne({ email });
+    // Normalize email for lookup
+    const normalizedEmail = email.toLowerCase().trim();
+    console.log(`[AUTH] Normalized email for lookup: ${normalizedEmail}`);
+    
+    // Try exact match first (normalized)
+    let user = await User.findOne({ email: normalizedEmail });
+    
+    // If not found, try case-insensitive search (for emails stored before normalization)
     if (!user) {
+      console.log(`[AUTH] Exact match not found, trying case-insensitive search...`);
+      user = await User.findOne({ 
+        email: { $regex: new RegExp(`^${normalizedEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
+      });
+      if (user) {
+        console.log(`[AUTH] ✅ Found with case-insensitive search (email stored as: "${user.email}")`);
+        // Normalize the email in database for future lookups
+        if (user.email !== normalizedEmail) {
+          console.log(`[AUTH] Normalizing email in database from "${user.email}" to "${normalizedEmail}"`);
+          user.email = normalizedEmail;
+          await user.save({ validateBeforeSave: false });
+        }
+      }
+    }
+    
+    if (!user) {
+      console.log(`[AUTH] ❌ User not found with email: ${normalizedEmail}`);
+      console.log(`[AUTH] This could mean:`);
+      console.log(`   1. Account doesn't exist with this email`);
+      console.log(`   2. Email has a typo`);
       return res.status(401).json({
         success: false,
         message: 'Invalid credentials',
       });
     }
+
+    console.log(`[AUTH] ✅ User found: ${user.name} (${user.email})`);
+    console.log(`[AUTH] Verifying password...`);
 
     const isMatch = await user.comparePassword(password);
     if (!isMatch) {
+      console.log(`[AUTH] ❌ Password mismatch for user: ${user.email}`);
       return res.status(401).json({
         success: false,
         message: 'Invalid credentials',
       });
     }
 
+    console.log(`[AUTH] ✅ Password verified successfully`);
+
     const token = generateToken(user._id);
+
+    console.log(`[AUTH] ✅ Login successful for user: ${user.name} (${user.email})`);
 
     res.status(200).json({
       success: true,
@@ -99,6 +200,7 @@ exports.login = async (req, res, next) => {
       },
     });
   } catch (err) {
+    console.error(`[AUTH] ❌ Login error:`, err.message);
     next(err);
   }
 };
@@ -146,7 +248,25 @@ exports.forgotPassword = async (req, res, next) => {
     const normalizedEmail = email.toLowerCase().trim();
     console.log(`[AUTH] Normalized email for lookup: ${normalizedEmail}`);
 
-    const user = await User.findOne({ email: normalizedEmail });
+    // Try exact match first (normalized)
+    let user = await User.findOne({ email: normalizedEmail });
+    
+    // If not found, try case-insensitive search (for emails stored before normalization)
+    if (!user) {
+      console.log(`[AUTH] Exact match not found, trying case-insensitive search...`);
+      user = await User.findOne({ 
+        email: { $regex: new RegExp(`^${normalizedEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
+      });
+      if (user) {
+        console.log(`[AUTH] ✅ Found with case-insensitive search (email stored as: "${user.email}")`);
+        // Normalize the email in database for future lookups
+        if (user.email !== normalizedEmail) {
+          console.log(`[AUTH] Normalizing email in database from "${user.email}" to "${normalizedEmail}"`);
+          user.email = normalizedEmail;
+          await user.save({ validateBeforeSave: false });
+        }
+      }
+    }
     
     console.log(`[AUTH] User lookup result: ${user ? '✅ Found' : '❌ Not found'}`);
     if (user) {
