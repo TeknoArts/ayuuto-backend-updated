@@ -10,6 +10,9 @@ dotenv.config();
 
 const app = express();
 
+// Trust proxy (important for Railway/cloud platforms to get correct protocol)
+app.set('trust proxy', true);
+
 // Middleware
 app.use(cors({
   origin: '*', // Allow all origins for development

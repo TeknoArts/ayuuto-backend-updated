@@ -16,9 +16,23 @@ exports.serveGroupView = (req, res) => {
     console.log(`[WebView] Serving group view for shareCode: ${shareCode}`);
 
     // Get the current host and protocol
-    const protocol = req.protocol;
-    const host = req.get('host');
-    const apiBaseUrl = `${protocol}://${host}/api/public`;
+    // On Railway/cloud platforms, check X-Forwarded-Proto header (behind proxy)
+    const protocol = req.get('X-Forwarded-Proto') || req.protocol || 'https';
+    const host = req.get('host') || req.get('X-Forwarded-Host') || 'web-production-40b9d.up.railway.app';
+    
+    // Use BACKEND_URL if available (more reliable for production)
+    let apiBaseUrl;
+    if (process.env.BACKEND_URL) {
+      apiBaseUrl = `${process.env.BACKEND_URL}/api/public`;
+    } else if (process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_SERVICE_NAME) {
+      // On Railway, always use HTTPS
+      apiBaseUrl = `https://${host}/api/public`;
+    } else {
+      // Development fallback
+      apiBaseUrl = `${protocol}://${host}/api/public`;
+    }
+    
+    console.log(`[WebView] API Base URL: ${apiBaseUrl}`);
 
     // Generate HTML with inline CSS and JS - Pixel perfect match to mobile app
     const html = `<!DOCTYPE html>
