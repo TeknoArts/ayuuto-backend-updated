@@ -7,6 +7,7 @@ const {
   sendTestNotification,
   getPushTokenInfo,
   getUsers,
+  getUserStats,
 } = require('../controllers/userController');
 
 // All routes require authentication
@@ -14,6 +15,7 @@ router.use(authMiddleware);
 
 // Routes
 router.get('/', getUsers);
+router.get('/stats', getUserStats);
 router.post('/push-token', registerPushToken);
 router.delete('/push-token', removePushToken);
 router.post('/test-notification', sendTestNotification); // Test endpoint for sending notifications

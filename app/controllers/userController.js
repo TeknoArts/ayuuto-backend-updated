@@ -235,3 +235,50 @@ exports.getUsers = async (req, res, next) => {
   }
 };
 
+// @desc    Get user statistics (total count, etc.)
+// @route   GET /api/users/stats
+// @access  Private
+exports.getUserStats = async (req, res, next) => {
+  try {
+    const totalUsers = await User.countDocuments();
+    const usersWithEmail = await User.countDocuments({ email: { $exists: true, $ne: '' } });
+    const usersWithName = await User.countDocuments({ name: { $exists: true, $ne: '' } });
+    
+    // Count by creation date
+    const now = new Date();
+    const thisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    
+    const usersThisMonth = await User.countDocuments({ createdAt: { $gte: thisMonth } });
+    const usersLastMonth = await User.countDocuments({ 
+      createdAt: { $gte: lastMonth, $lt: thisMonth } 
+    });
+    
+    // Get recent users (last 5)
+    const recentUsers = await User.find()
+      .select('name email createdAt')
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .lean();
+
+    res.status(200).json({
+      success: true,
+      data: {
+        totalUsers,
+        usersWithEmail,
+        usersWithName,
+        growth: {
+          thisMonth: usersThisMonth,
+          lastMonth: usersLastMonth,
+        },
+        recentUsers: recentUsers.map(u => ({
+          name: u.name || 'No name',
+          email: u.email || 'No email',
+          createdAt: u.createdAt,
+        })),
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
