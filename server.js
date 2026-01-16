@@ -22,17 +22,65 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // Database connection
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/ayuuto';
 
+// Log MongoDB connection attempt (without showing password)
+if (process.env.MONGODB_URI) {
+  const maskedUri = MONGODB_URI.replace(/\/\/[^:]+:[^@]+@/, '//***:***@');
+  console.log('🔌 Attempting to connect to MongoDB...');
+  console.log(`   URI: ${maskedUri}`);
+} else {
+  console.warn('⚠️  MONGODB_URI not set! Using default localhost (will fail on Railway)');
+  console.warn('   Please set MONGODB_URI environment variable in Railway');
+}
+
 mongoose
   .connect(MONGODB_URI, {
     autoIndex: true,
+    serverSelectionTimeoutMS: 10000, // 10 second timeout
+    socketTimeoutMS: 45000, // 45 second timeout
   })
   .then(() => {
-    console.log('Connected to MongoDB');
+    console.log('✅ Connected to MongoDB successfully');
+    console.log(`   Database: ${mongoose.connection.name}`);
+    console.log(`   Host: ${mongoose.connection.host}`);
     // Initialize scheduler after database connection is established
     initializeScheduler();
   })
   .catch((err) => {
-    console.error('MongoDB connection error:', err.message);
+    console.error('❌ MongoDB connection error:', err.message);
+    console.error('   Error details:', {
+      name: err.name,
+      code: err.code,
+      codeName: err.codeName
+    });
+    
+    // Provide helpful error messages
+    if (err.message.includes('authentication failed')) {
+      console.error('\n🔐 Authentication Failed!');
+      console.error('   - Check MongoDB Atlas username and password');
+      console.error('   - Verify credentials in MONGODB_URI');
+      console.error('   - Make sure password is URL-encoded if it has special characters');
+    } else if (err.message.includes('IP') || err.message.includes('whitelist')) {
+      console.error('\n🌐 IP Whitelist Error!');
+      console.error('   - Go to MongoDB Atlas → Network Access');
+      console.error('   - Add IP: 0.0.0.0/0 (allows all IPs)');
+      console.error('   - Or add Railway\'s IP addresses');
+    } else if (err.message.includes('timeout') || err.message.includes('ENOTFOUND')) {
+      console.error('\n⏱️  Connection Timeout!');
+      console.error('   - Check MongoDB Atlas cluster is running');
+      console.error('   - Verify connection string format');
+      console.error('   - Check network connectivity');
+    } else if (!process.env.MONGODB_URI) {
+      console.error('\n⚠️  MONGODB_URI Not Set!');
+      console.error('   - Set MONGODB_URI environment variable in Railway');
+      console.error('   - Format: mongodb+srv://username:password@cluster.mongodb.net/ayuuto');
+    }
+    
+    console.error('\n💡 Troubleshooting:');
+    console.error('   1. Check Railway Dashboard → Variables → MONGODB_URI');
+    console.error('   2. Verify MongoDB Atlas → Network Access → IP Whitelist');
+    console.error('   3. Test connection string in MongoDB Atlas');
+    console.error('   4. Check Railway logs for more details\n');
+    
     process.exit(1);
   });
 
