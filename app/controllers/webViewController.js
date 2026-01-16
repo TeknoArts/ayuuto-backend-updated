@@ -41,6 +41,9 @@ exports.serveGroupView = (req, res) => {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="description" content="View Ayuuto Group Details">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>Ayuuto Group View</title>
     <meta name="theme-color" content="#011b3d">
     <style>
@@ -663,7 +666,9 @@ async function loadGroup() {
         // Use shareCode instead of token - no token in URL
         // URL encode the shareCode to handle special characters
         const encodedShareCode = encodeURIComponent(shareCode);
-        const apiUrl = \`\${API_BASE_URL}/groups/view/\${encodedShareCode}\`;
+        // Add timestamp to prevent browser caching
+        const timestamp = new Date().getTime();
+        const apiUrl = \`\${API_BASE_URL}/groups/view/\${encodedShareCode}?_t=\${timestamp}\`;
         
         console.log('Loading group with shareCode:', shareCode);
         console.log('API URL:', apiUrl);
@@ -672,8 +677,10 @@ async function loadGroup() {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json',
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache',
             },
-            cache: 'no-cache', // Prevent caching issues
+            cache: 'no-store', // Prevent caching - use no-store instead of no-cache
         });
 
         if (!response.ok) {
@@ -904,7 +911,14 @@ if (document.readyState === 'loading') {
 </body>
 </html>`;
 
-    res.setHeader('Content-Type', 'text/html');
+    // Disable caching for HTML page - data changes frequently (payments, status, participants)
+    res.set({
+      'Content-Type': 'text/html',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+      'ETag': false, // Disable ETag to prevent 304 responses
+    });
     res.send(html);
   } catch (err) {
     res.status(500).send('Error loading page');
