@@ -712,6 +712,16 @@ async function loadGroup() {
     }
 }
 
+// Helper function to format participant name (extract part before @ if email)
+function formatParticipantName(name) {
+    if (!name) return '';
+    if (name.includes('@')) {
+        const emailParts = name.split('@');
+        return emailParts[0] || name;
+    }
+    return name;
+}
+
 function renderGroup(group) {
     // Group name
     document.getElementById('group-name').textContent = group.name.toUpperCase();
@@ -737,7 +747,8 @@ function renderGroup(group) {
         const progressBars = group.participants ? group.participants.map(() => '<div class="progress-bar-segment"></div>').join('') : '';
         nextRecipientEl.innerHTML = '<div class="progress-indicator">' + progressBars + '</div>';
     } else if (group.rounds && group.rounds.length > 0 && group.rounds[0].recipient) {
-        nextRecipientEl.innerHTML = '<div class="next-recipient-name">' + escapeHtml(group.rounds[0].recipient.name.toUpperCase()) + '</div>';
+        const recipientName = formatParticipantName(group.rounds[0].recipient.name);
+        nextRecipientEl.innerHTML = '<div class="next-recipient-name">' + escapeHtml(recipientName.toUpperCase()) + '</div>';
     } else {
         nextRecipientEl.innerHTML = '<div class="question-marks">???</div>';
     }
@@ -806,7 +817,7 @@ function renderParticipants(participants, group) {
                 <div class="participant-top-row">
                     <div class="participant-left">
                         \${orderNumberHtml}
-                        <div class="participant-name">\${escapeHtml(p.name)}</div>
+                        <div class="participant-name">\${escapeHtml(formatParticipantName(p.name))}</div>
                         \${paidOutTag}
                     </div>
                     \${statusHtml}
