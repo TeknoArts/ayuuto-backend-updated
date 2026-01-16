@@ -840,20 +840,24 @@ exports.updatePaymentStatus = async (req, res, next) => {
         console.error('Error creating payment log entry:', logError);
       }
 
-      // Store notification + send push to group owner when payment is marked as paid
+      // Store notification + send push to all group members when payment is marked as paid
       try {
-        await notificationService.sendNotificationToUser({
-          userId: group.createdBy,
-          title: 'Payment Received',
-          body: `${participant.name} has marked their payment as complete in ${group.name}`,
-          type: 'payment',
-          data: {
+        // Populate participants.user to get user IDs for notifications
+        await group.populate('participants.user', 'name email');
+        await group.populate('createdBy', 'name email');
+        
+        await notificationService.sendNotificationToGroup(
+          group,
+          'Payment Received',
+          `${participant.name} has marked their payment as complete in ${group.name}`,
+          'payment',
+          {
             type: 'payment',
-            groupId: group._id.toString(),
             participantId: participant._id.toString(),
             participantName: participant.name,
           },
-        });
+          participant.user ? (participant.user._id ? participant.user._id.toString() : participant.user.toString()) : null
+        );
       } catch (notificationError) {
         // Don't fail the request if notification fails
         console.error('Error sending/storing payment notification:', notificationError);
@@ -1288,32 +1292,34 @@ exports.nextRound = async (req, res, next) => {
       rounds = await Round.find({ group: group._id }).sort({ roundNumber: 1 });
     }
 
-    // Store notifications + send push
+    // Store notifications + send push to all group members
     try {
+      // Populate participants.user and createdBy to get user IDs for notifications
+      await group.populate('participants.user', 'name email');
+      await group.populate('createdBy', 'name email');
+      
       if (allNowPaidOut) {
-        await notificationService.sendNotificationToUser({
-          userId: group.createdBy,
-          title: 'Ayuuto Completed! 🎉',
-          body: `All members of ${group.name} have received their payments. The group is now complete!`,
-          type: 'group_completed',
-          data: {
+        await notificationService.sendNotificationToGroup(
+          group,
+          'Ayuuto Completed! 🎉',
+          `All members of ${group.name} have received their payments. The group is now complete!`,
+          'group_completed',
+          {
             type: 'group_completed',
-            groupId: group._id.toString(),
-          },
-        });
+          }
+        );
       } else if (nextRecipient && currentRoundDoc) {
-        await notificationService.sendNotificationToUser({
-          userId: group.createdBy,
-          title: 'Next Round Started',
-          body: `Round ${currentRoundDoc.roundNumber} has started. ${nextRecipient.name} is now the recipient.`,
-          type: 'next_round',
-          data: {
+        await notificationService.sendNotificationToGroup(
+          group,
+          'Next Round Started',
+          `Round ${currentRoundDoc.roundNumber} has started. ${nextRecipient.name} is now the recipient.`,
+          'next_round',
+          {
             type: 'next_round',
-            groupId: group._id.toString(),
             recipientName: nextRecipient.name,
             roundNumber: currentRoundDoc.roundNumber.toString(),
-          },
-        });
+          }
+        );
       }
     } catch (notificationError) {
       console.error('Error sending/storing next round notification:', notificationError);
