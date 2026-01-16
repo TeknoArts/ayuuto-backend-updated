@@ -108,22 +108,27 @@ exports.addParticipants = async (req, res, next) => {
       if (p && typeof p === 'object') {
         let userId = p.userId || p.user || null;
         let name = (p.name || '').trim();
+        // Always capture email from request if provided
+        let participantEmail = (p.email || '').trim().toLowerCase() || null;
 
         // If no explicit userId but email provided, try to resolve an existing user
-        if (!userId && p.email) {
-          const email = String(p.email).trim().toLowerCase();
-          if (email) {
-            const existingUser = await User.findOne({ email });
-            if (existingUser) {
-              userId = existingUser._id;
-              if (!name) {
-                name = existingUser.name || existingUser.email || email;
-              }
-            } else if (!name) {
-              // Fallback: use email as name if no user found and name empty
-              name = email;
+        if (!userId && participantEmail) {
+          const existingUser = await User.findOne({ email: participantEmail });
+          if (existingUser) {
+            userId = existingUser._id;
+            if (!name) {
+              name = existingUser.name || existingUser.email || participantEmail;
             }
+            // Keep the email even if user is found (for consistency and email notifications)
+          } else if (!name) {
+            // Fallback: use email as name if no user found and name empty
+            name = participantEmail;
           }
+        }
+        
+        // Also handle case where email is provided even if userId is also provided
+        if (!participantEmail && p.email) {
+          participantEmail = String(p.email).trim().toLowerCase() || null;
         }
 
         if (!name && (p.email || p.name)) {
@@ -145,9 +150,15 @@ exports.addParticipants = async (req, res, next) => {
         normalizedParticipants.push({
           name,
           user: userId,
+          email: participantEmail || null, // Always store email if provided (for both registered and non-registered)
           order: null,
           isPaid: false,
         });
+        
+        // Debug log
+        if (participantEmail) {
+          console.log(`[GROUP] 📝 Normalized participant: name="${name}", userId=${userId || 'null'}, email="${participantEmail}"`);
+        }
         continue;
       }
 
@@ -165,7 +176,7 @@ exports.addParticipants = async (req, res, next) => {
     // Save group first so that new participants get _id assigned by Mongoose
     await group.save();
 
-    // Reload group to get the saved participants with their _id values
+    // Reload group to get the saved participants with their _id values and email fields
     const savedGroup = await Group.findById(group._id);
 
     // Get admin/creator information for email notifications
@@ -185,12 +196,52 @@ exports.addParticipants = async (req, res, next) => {
     });
     
     for (const participant of normalizedParticipants) {
-      // Try to get email from participant's user reference
+      // Find the saved participant to get the stored email
+      // Try multiple matching strategies to find the saved participant
+      let savedParticipant = null;
+      
+      if (participant.user) {
+        // Match by userId (registered user)
+        savedParticipant = savedGroup.participants.find(sp => 
+          sp.user && sp.user.toString() === participant.user.toString()
+        );
+      } else {
+        // For non-registered participants, try matching by email first, then by name
+        if (participant.email) {
+          savedParticipant = savedGroup.participants.find(sp => 
+            sp.email && sp.email.toLowerCase() === participant.email.toLowerCase() && !sp.user
+          );
+        }
+        // If not found by email, try by name
+        if (!savedParticipant) {
+          savedParticipant = savedGroup.participants.find(sp => 
+            sp.name === participant.name && !sp.user
+          );
+        }
+      }
+      
+      // Use saved participant's email if available (in case it was stored)
+      if (savedParticipant && savedParticipant.email && !participant.email) {
+        participant.email = savedParticipant.email;
+      }
+      // Also use saved participant's email if we have it stored there
+      if (savedParticipant && savedParticipant.email) {
+        participant.email = savedParticipant.email;
+      }
+      
+      // Try to get email from participant's user reference OR from participant's email field
       let participantEmail = null;
       let participantName = participant.name;
 
-      console.log(`[GROUP] Processing participant: "${participantName}", has userId: ${participant.user ? 'Yes' : 'No'}`);
+      console.log(`[GROUP] Processing participant: "${participantName}", has userId: ${participant.user ? 'Yes' : 'No'}, has email: ${participant.email ? 'Yes' : 'No'}`);
+      console.log(`[GROUP] 🔍 Debug - participant.email value: ${participant.email || 'null'}, participant.user: ${participant.user || 'null'}`);
+      if (savedParticipant) {
+        console.log(`[GROUP] 🔍 Debug - savedParticipant.email: ${savedParticipant.email || 'null'}, savedParticipant.user: ${savedParticipant.user || 'null'}`);
+      } else {
+        console.log(`[GROUP] 🔍 Debug - savedParticipant: NOT FOUND`);
+      }
 
+      // Priority 1: Get email from user reference (if participant is a registered user)
       if (participant.user) {
         try {
           const participantUser = await User.findById(participant.user).select('email name');
@@ -207,9 +258,24 @@ exports.addParticipants = async (req, res, next) => {
         } catch (userLookupError) {
           console.error(`[GROUP] ❌ Error looking up user for participant:`, userLookupError);
         }
-      } else {
-        console.log(`[GROUP] ⚠️  Participant "${participantName}" has no userId - cannot send email (participant not a registered user)`);
-        console.log(`[GROUP]    To send emails, participants must be added with userId (registered users)`);
+      }
+      
+      // Priority 2: Get email from participant object itself (for non-registered participants)
+      if (!participantEmail && participant.email) {
+        participantEmail = participant.email.trim().toLowerCase();
+        console.log(`[GROUP] ✅ Using email from participant object: ${participantEmail} (non-registered participant)`);
+      }
+      
+      // Priority 3: Get email from saved participant (fallback)
+      if (!participantEmail && savedParticipant && savedParticipant.email) {
+        participantEmail = savedParticipant.email.trim().toLowerCase();
+        console.log(`[GROUP] ✅ Using email from saved participant: ${participantEmail} (non-registered participant)`);
+      }
+      
+      // Log if no email available
+      if (!participantEmail) {
+        console.log(`[GROUP] ⚠️  Participant "${participantName}" has no email address - cannot send email`);
+        console.log(`[GROUP]    Add participant with email field to send invitation email`);
       }
 
       // Ensure group has a shareCode for viewing (generate if doesn't exist) - do this ONCE before the loop
@@ -240,7 +306,7 @@ exports.addParticipants = async (req, res, next) => {
         }
       }
 
-      // Send email if we have an email address
+      // Send email if we have an email address (from user OR from participant email field)
       if (participantEmail) {
         console.log(`[GROUP] 📤 Sending group notification email to: ${participantEmail} for participant: ${participantName}`);
         console.log(`[GROUP] Using shareCode: ${savedGroup.shareCode || 'NOT SET'}`);

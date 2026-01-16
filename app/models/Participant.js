@@ -14,6 +14,13 @@ const participantSchema = new mongoose.Schema({
     required: true,
     trim: true,
   },
+  // Email address for non-registered participants (so we can send them emails)
+  email: {
+    type: String,
+    trim: true,
+    lowercase: true,
+    default: null,
+  },
   order: {
     type: Number,
     default: null,
