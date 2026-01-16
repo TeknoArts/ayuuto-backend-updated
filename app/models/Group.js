@@ -53,6 +53,55 @@ const groupSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    // Shareable link fields
+    shareToken: {
+      type: String,
+      unique: true,
+      sparse: true, // Allow multiple null values - only index non-null values
+      default: undefined, // Don't set default to null, leave undefined
+    },
+    shareCode: {
+      type: String,
+      unique: true,
+      sparse: true, // Allow multiple null values - only index non-null values
+      default: undefined, // Don't set default to null, leave undefined
+    },
+    shareTokenExpiresAt: {
+      type: Date,
+      default: null,
+    },
+    isShareable: {
+      type: Boolean,
+      default: false, // Admin must explicitly enable sharing
+    },
+    shareSettings: {
+      showParticipants: {
+        type: Boolean,
+        default: true,
+      },
+      showPaymentStatus: {
+        type: Boolean,
+        default: true,
+      },
+      showActivityLog: {
+        type: Boolean,
+        default: true,
+      },
+      showAmounts: {
+        type: Boolean,
+        default: true,
+      },
+    },
+    // Invitation fields (store invite tokens per participant)
+    // Format: { "participantId": { token: String, expiresAt: Date } }
+    participantInviteTokens: {
+      type: Map,
+      of: {
+        token: { type: String, required: true },
+        expiresAt: { type: Date, required: true },
+      },
+      default: {},
+    },
   },
   {
     timestamps: true,

@@ -40,11 +40,36 @@ mongoose
 const authRoutes = require('./app/routes/authRoutes');
 const groupRoutes = require('./app/routes/groupRoutes');
 const userRoutes = require('./app/routes/userRoutes');
+const publicRoutes = require('./app/routes/publicRoutes');
+const inviteRoutes = require('./app/routes/inviteRoutes');
+const webViewController = require('./app/controllers/webViewController');
 
 // Base API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/groups', groupRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/public', publicRoutes);
+app.use('/api', inviteRoutes);
+
+// Public invite route (without /api prefix for cleaner URLs in emails)
+app.use('/invite', inviteRoutes);
+
+// Web view route (for shareable links) - uses shareCode, no token in URL
+app.get('/view/:shareCode', webViewController.serveGroupView);
+
+// Root route - helpful message
+app.get('/', (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: 'Ayuuto Backend API is running',
+    endpoints: {
+      api: '/api',
+      viewGroup: '/view/:shareCode',
+      invite: '/invite/:groupId'
+    },
+    note: 'Use /view/{shareCode} to view a group, or /invite/{groupId} for invitations'
+  });
+});
 
 // Initialize scheduler for collection notifications
 const { initializeScheduler } = require('./app/services/schedulerService');
@@ -76,7 +101,7 @@ app.listen(PORT, HOST, () => {
   if (process.env.NODE_ENV === 'production') {
     console.log(`Production server running on port ${PORT}`);
   } else {
-    console.log(`Development server accessible from network at: http://192.168.18.122:${PORT}`);
+    console.log(`Development server accessible from network at: http://192.168.18.126:${PORT}`);
   }
 });
 

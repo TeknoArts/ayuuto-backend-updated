@@ -162,7 +162,11 @@ exports.addParticipants = async (req, res, next) => {
     // Append new participants to any existing participants
     group.participants = [...group.participants, ...normalizedParticipants];
 
+    // Save group first so that new participants get _id assigned by Mongoose
     await group.save();
+
+    // Reload group to get the saved participants with their _id values
+    const savedGroup = await Group.findById(group._id);
 
     // Get admin/creator information for email notifications
     const admin = await User.findById(req.user.id).select('name email');
@@ -171,7 +175,14 @@ exports.addParticipants = async (req, res, next) => {
     // Send email notifications to newly added participants who have email addresses
     const emailPromises = [];
     console.log(`[GROUP] 📧 Processing ${normalizedParticipants.length} participant(s) for email notifications`);
-    console.log(`[GROUP] Group: ${group.name}, Admin: ${adminName}`);
+    console.log(`[GROUP] Group: ${savedGroup.name}, Admin: ${adminName}`);
+    
+    // Create a map to find saved participants by name and user
+    const savedParticipantsMap = new Map();
+    savedGroup.participants.forEach(p => {
+      const key = p.user ? p.user.toString() : p.name;
+      savedParticipantsMap.set(key, p);
+    });
     
     for (const participant of normalizedParticipants) {
       // Try to get email from participant's user reference
@@ -201,20 +212,56 @@ exports.addParticipants = async (req, res, next) => {
         console.log(`[GROUP]    To send emails, participants must be added with userId (registered users)`);
       }
 
+      // Ensure group has a shareCode for viewing (generate if doesn't exist) - do this ONCE before the loop
+      if (!savedGroup.shareCode) {
+        const { generateShareCode } = require('../utils/shareToken');
+        let shareCode;
+        let attempts = 0;
+        // Ensure unique share code
+        do {
+          shareCode = generateShareCode();
+          const existing = await Group.findOne({ shareCode });
+          if (!existing) break;
+          attempts++;
+          if (attempts > 10) {
+            console.error(`[GROUP] ❌ Failed to generate unique share code`);
+            break;
+          }
+        } while (true);
+        
+        if (shareCode) {
+          savedGroup.shareCode = shareCode;
+          savedGroup.isShareable = true; // Enable sharing so participants can view
+          // Set expiration (90 days)
+          savedGroup.shareTokenExpiresAt = new Date();
+          savedGroup.shareTokenExpiresAt.setDate(savedGroup.shareTokenExpiresAt.getDate() + 90);
+          await savedGroup.save();
+          console.log(`[GROUP] ✅ Generated shareCode for group: ${shareCode}`);
+        }
+      }
+
       // Send email if we have an email address
       if (participantEmail) {
-        console.log(`[GROUP] 📤 Sending invitation email to: ${participantEmail} for participant: ${participantName}`);
+        console.log(`[GROUP] 📤 Sending group notification email to: ${participantEmail} for participant: ${participantName}`);
+        console.log(`[GROUP] Using shareCode: ${savedGroup.shareCode || 'NOT SET'}`);
+        
+        if (!savedGroup.shareCode) {
+          console.error(`[GROUP] ❌ ERROR: shareCode is missing! Cannot send email with view link.`);
+        }
+        
         emailPromises.push(
           sendGroupInvitationEmail(
             participantEmail,
             participantName,
-            group.name,
-            adminName
+            savedGroup.name,
+            adminName,
+            savedGroup._id.toString(),
+            savedGroup.shareCode
           ).then(() => {
-            console.log(`[GROUP] ✅ Successfully sent invitation email to: ${participantEmail}`);
+            console.log(`[GROUP] ✅ Successfully sent group notification email to: ${participantEmail}`);
           }).catch((emailError) => {
             // Log error but don't fail the request
-            console.error(`[GROUP] ❌ Error sending invitation email to ${participantEmail}:`, emailError.message || emailError);
+            console.error(`[GROUP] ❌ Error sending group notification email to ${participantEmail}:`, emailError.message || emailError);
           })
         );
       } else {
@@ -222,17 +269,20 @@ exports.addParticipants = async (req, res, next) => {
       }
     }
 
+    // Save group with invite tokens
+    await savedGroup.save();
+
     // Send all emails in parallel (non-blocking)
     if (emailPromises.length > 0) {
       Promise.all(emailPromises).then(() => {
-        console.log(`[GROUP] Sent ${emailPromises.length} group invitation email(s) for group: ${group.name}`);
+        console.log(`[GROUP] Sent ${emailPromises.length} group invitation email(s) for group: ${savedGroup.name}`);
       }).catch((error) => {
         console.error('[GROUP] Error sending some invitation emails:', error);
       });
     }
 
     // Map participants to include id
-    const participantsWithId = group.participants.map((p) => ({
+    const participantsWithId = savedGroup.participants.map((p) => ({
       id: p._id.toString(),
       name: p.name,
       order: p.order,
@@ -1258,6 +1308,258 @@ exports.nextRound = async (req, res, next) => {
               }
             : null,
         },
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// @desc    Enable sharing and generate share link
+// @route   POST /api/groups/:groupId/share/enable
+// @access  Private (Group Admin only)
+exports.enableSharing = async (req, res, next) => {
+  try {
+    const { groupId } = req.params;
+    const { expiresInDays, shareSettings } = req.body;
+
+    const group = await Group.findById(groupId);
+    if (!group) {
+      return res.status(404).json({
+        success: false,
+        message: 'Group not found',
+      });
+    }
+
+    // Check authorization
+    if (group.createdBy.toString() !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only group admin can enable sharing',
+      });
+    }
+
+    // Generate token if not exists
+    if (!group.shareToken) {
+      const { generateShareToken } = require('../utils/shareToken');
+      group.shareToken = generateShareToken();
+    }
+
+    // Generate share code if not exists (short code for URL, no token visible)
+    if (!group.shareCode) {
+      const { generateShareCode } = require('../utils/shareToken');
+      let shareCode;
+      let attempts = 0;
+      // Ensure unique share code
+      do {
+        shareCode = generateShareCode();
+        const existing = await Group.findOne({ shareCode });
+        if (!existing) break;
+        attempts++;
+        if (attempts > 10) {
+          throw new Error('Failed to generate unique share code');
+        }
+      } while (true);
+      group.shareCode = shareCode;
+    }
+
+    // Set expiration (default: 90 days)
+    const expiresIn = expiresInDays || 90;
+    group.shareTokenExpiresAt = new Date();
+    group.shareTokenExpiresAt.setDate(
+      group.shareTokenExpiresAt.getDate() + expiresIn
+    );
+
+    // Enable sharing
+    group.isShareable = true;
+
+    // Update share settings if provided
+    if (shareSettings) {
+      group.shareSettings = {
+        ...group.shareSettings,
+        ...shareSettings,
+      };
+    }
+
+    await group.save();
+
+    // Generate share link using shareCode (no token in URL)
+    const { generateShareLink } = require('../utils/shareToken');
+    const shareLink = generateShareLink(group.shareCode, req);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        shareLink,
+        shareToken: group.shareToken,
+        expiresAt: group.shareTokenExpiresAt,
+        shareSettings: group.shareSettings,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// @desc    Disable sharing
+// @route   POST /api/groups/:groupId/share/disable
+// @access  Private (Group Admin only)
+exports.disableSharing = async (req, res, next) => {
+  try {
+    const { groupId } = req.params;
+
+    const group = await Group.findById(groupId);
+    if (!group) {
+      return res.status(404).json({
+        success: false,
+        message: 'Group not found',
+      });
+    }
+
+    // Check authorization
+    if (group.createdBy.toString() !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only group admin can disable sharing',
+      });
+    }
+
+    group.isShareable = false;
+    await group.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Sharing disabled successfully',
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// @desc    Get share link (if sharing is enabled)
+// @route   GET /api/groups/:groupId/share
+// @access  Private (Group Admin only)
+exports.getShareLink = async (req, res, next) => {
+  try {
+    const { groupId } = req.params;
+
+    const group = await Group.findById(groupId);
+    if (!group) {
+      return res.status(404).json({
+        success: false,
+        message: 'Group not found',
+      });
+    }
+
+    // Check authorization
+    if (group.createdBy.toString() !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only group admin can view share link',
+      });
+    }
+
+    if (!group.isShareable || !group.shareToken) {
+      return res.status(400).json({
+        success: false,
+        message: 'Sharing is not enabled for this group',
+      });
+    }
+
+    // Generate shareCode if it doesn't exist (for backward compatibility)
+    if (!group.shareCode) {
+      const { generateShareCode } = require('../utils/shareToken');
+      let shareCode;
+      let attempts = 0;
+      // Ensure unique share code
+      do {
+        shareCode = generateShareCode();
+        const existing = await Group.findOne({ shareCode });
+        if (!existing) break;
+        attempts++;
+        if (attempts > 10) {
+          throw new Error('Failed to generate unique share code');
+        }
+      } while (true);
+      group.shareCode = shareCode;
+      await group.save();
+    }
+
+    const { generateShareLink } = require('../utils/shareToken');
+    const shareLink = generateShareLink(group.shareCode, req);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        shareLink,
+        expiresAt: group.shareTokenExpiresAt,
+        shareSettings: group.shareSettings,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// @desc    Regenerate share token
+// @route   POST /api/groups/:groupId/share/regenerate
+// @access  Private (Group Admin only)
+exports.regenerateShareToken = async (req, res, next) => {
+  try {
+    const { groupId } = req.params;
+    const { expiresInDays } = req.body;
+
+    const group = await Group.findById(groupId);
+    if (!group) {
+      return res.status(404).json({
+        success: false,
+        message: 'Group not found',
+      });
+    }
+
+    // Check authorization
+    if (group.createdBy.toString() !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only group admin can regenerate share token',
+      });
+    }
+
+    // Generate new token and share code
+    const { generateShareToken, generateShareCode, generateShareLink } = require('../utils/shareToken');
+    group.shareToken = generateShareToken();
+    
+    // Generate new share code
+    let shareCode;
+    let attempts = 0;
+    do {
+      shareCode = generateShareCode();
+      const existing = await Group.findOne({ shareCode });
+      if (!existing) break;
+      attempts++;
+      if (attempts > 10) {
+        throw new Error('Failed to generate unique share code');
+      }
+    } while (true);
+    group.shareCode = shareCode;
+
+    // Set expiration
+    const expiresIn = expiresInDays || 90;
+    group.shareTokenExpiresAt = new Date();
+    group.shareTokenExpiresAt.setDate(
+      group.shareTokenExpiresAt.getDate() + expiresIn
+    );
+
+    await group.save();
+
+    const shareLink = generateShareLink(group.shareCode, req);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        shareLink,
+        shareToken: group.shareToken,
+        expiresAt: group.shareTokenExpiresAt,
       },
     });
   } catch (err) {

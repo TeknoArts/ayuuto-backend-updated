@@ -493,8 +493,81 @@ exports.sendWelcomeEmail = async (email, name) => {
  * @param {string} adminName - Admin/creator name who added them
  * @returns {Promise<Object>} - Promise that resolves with email info
  */
-exports.sendGroupInvitationEmail = async (participantEmail, participantName, groupName, adminName) => {
+exports.sendGroupInvitationEmail = async (participantEmail, participantName, groupName, adminName, groupId = null, shareCode = null) => {
   const subject = `You've been added to ${groupName} on Ayuuto`;
+  
+  // Generate view group URL using shareCode
+  // IMPORTANT: Never use localhost in emails - emails are opened on different devices!
+  // Always use network-accessible IP or domain
+  const localIP = process.env.LOCAL_SERVER_IP || '192.168.18.126';
+  const localPort = process.env.PORT || 5001;
+  
+  // Get base URL - prioritize environment variables, but ensure it's network-accessible
+  let baseUrl = process.env.FRONTEND_URL || process.env.BACKEND_URL;
+  
+  // If baseUrl contains localhost, replace it with the network IP
+  if (baseUrl && (baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1'))) {
+    console.warn(`[Email] ⚠️  Base URL contains localhost, replacing with network IP: ${baseUrl}`);
+    baseUrl = baseUrl.replace(/localhost|127\.0\.0\.1/g, localIP);
+  }
+  
+  // If baseUrl contains port 3000 (common frontend port), replace with backend port 5001
+  if (baseUrl && baseUrl.includes(':3000')) {
+    console.warn(`[Email] ⚠️  Base URL contains port 3000 (frontend), replacing with backend port ${localPort}: ${baseUrl}`);
+    baseUrl = baseUrl.replace(/:3000/g, `:${localPort}`);
+  }
+  
+  // If no baseUrl set, use network IP (never localhost for emails)
+  if (!baseUrl) {
+    baseUrl = `http://${localIP}:${localPort}`;
+  }
+  
+  // Ensure baseUrl doesn't contain localhost (safety check)
+  if (baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1')) {
+    console.error(`[Email] ❌ ERROR: Base URL still contains localhost: ${baseUrl}`);
+    baseUrl = `http://${localIP}:${localPort}`;
+  }
+  
+  // Final check - ensure port is correct (5001, not 3000)
+  if (baseUrl.includes(':3000')) {
+    console.error(`[Email] ❌ ERROR: Base URL still contains port 3000: ${baseUrl}`);
+    baseUrl = `http://${localIP}:${localPort}`;
+  }
+  
+  // Generate view group URL - uses shareCode, tries to deep link to app, falls back to public view
+  let viewGroupUrl;
+  if (shareCode) {
+    // Link to view page that will try to open app, or show public view
+    viewGroupUrl = `${baseUrl}/view/${shareCode}`;
+  } else if (groupId) {
+    // Fallback if no shareCode
+    viewGroupUrl = `${baseUrl}/view-group/${groupId}`;
+  } else {
+    // Last resort
+    viewGroupUrl = `${baseUrl}`;
+  }
+  
+  // Log for debugging
+  console.log(`[Email] Sending group notification email to: ${participantEmail}`);
+  console.log(`[Email] Group ID: ${groupId}, ShareCode: ${shareCode ? 'provided' : 'missing'}`);
+  console.log(`[Email] Generated view group URL: ${viewGroupUrl}`);
+  console.log(`[Email] Base URL used: ${baseUrl}`);
+  
+  // Ensure URL is valid (not '#' and doesn't contain localhost)
+  if (!viewGroupUrl || viewGroupUrl === '#' || viewGroupUrl.includes('localhost') || viewGroupUrl.includes('127.0.0.1')) {
+    console.error(`[Email] ❌ ERROR: Invalid view group URL generated: ${viewGroupUrl}`);
+    viewGroupUrl = shareCode ? `${baseUrl}/view/${shareCode}` : `${baseUrl}`;
+    console.log(`[Email] Using fallback URL: ${viewGroupUrl}`);
+  }
+  
+  // Final validation - ensure URL is a valid HTTP/HTTPS URL
+  if (!viewGroupUrl.startsWith('http://') && !viewGroupUrl.startsWith('https://')) {
+    console.error(`[Email] ❌ ERROR: URL doesn't start with http:// or https://: ${viewGroupUrl}`);
+    viewGroupUrl = shareCode ? `${baseUrl}/view/${shareCode}` : `${baseUrl}`;
+  }
+  
+  // Log final URL for debugging
+  console.log(`[Email] ✅ Final view group URL: ${viewGroupUrl}`);
   
   const html = `
     <!DOCTYPE html>
@@ -608,12 +681,28 @@ exports.sendGroupInvitationEmail = async (participantEmail, participantName, gro
           <li>Stay updated on group activities</li>
         </ul>
         
-        <p style="text-align: center; margin-top: 30px;">
-          <a href="#" class="cta-button" style="color: #ffffff; text-decoration: none;">Open Ayuuto App</a>
+        <div style="text-align: center; margin-top: 30px; margin-bottom: 20px;">
+          <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin: 0 auto; width: 100%; max-width: 300px;">
+            <tr>
+              <td align="center" style="background-color: #4CAF50; border-radius: 8px; padding: 0;">
+                <a href="${viewGroupUrl}" target="_blank" style="display: block; color: #ffffff !important; text-decoration: none !important; background-color: #4CAF50; padding: 18px 36px; border-radius: 8px; font-weight: bold; font-size: 18px; text-align: center; border: none; width: 100%; -webkit-text-size-adjust: none; mso-hide: all;">View Group</a>
+              </td>
+            </tr>
+          </table>
+        </div>
+        
+        <!-- Mobile-friendly fallback button -->
+        <div style="text-align: center; margin-top: 15px;">
+          <a href="${viewGroupUrl}" style="display: inline-block; color: #4CAF50; text-decoration: underline; font-size: 16px; padding: 10px;">Tap here to view group</a>
+        </div>
+        
+        <p style="color: #999; font-size: 14px; margin-top: 20px; text-align: center;">
+          Click the button above to view the group details.<br>
+          If you have the Ayuuto app installed, it will open automatically.
         </p>
         
-        <p style="color: #999; font-size: 14px; margin-top: 20px;">
-          If you don't have the Ayuuto app installed, download it from your app store to get started.
+        <p style="color: #666; font-size: 12px; margin-top: 20px; text-align: center;">
+          Or copy this link: <a href="${viewGroupUrl}" style="color: #4CAF50; word-break: break-all; text-decoration: underline;">${viewGroupUrl}</a>
         </p>
         
         <div class="footer">
