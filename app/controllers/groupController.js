@@ -610,6 +610,13 @@ exports.getGroupDetails = async (req, res, next) => {
       ? group.amountPerPerson * group.memberCount 
       : 0;
 
+    // Disable caching for group details - data changes frequently (payments, status, participants)
+    res.set({
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+    });
+
     res.status(200).json({
       success: true,
       data: {
@@ -947,6 +954,13 @@ exports.getGroupLogs = async (req, res, next) => {
       createdAt: log.createdAt,
     }));
 
+    // Disable caching for group logs - data changes frequently
+    res.set({
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+    });
+
     res.status(200).json({
       success: true,
       data: {
@@ -994,6 +1008,13 @@ exports.getUserGroups = async (req, res, next) => {
       .sort({ createdAt: -1 });
 
     console.log('Groups found for user:', groups.length);
+
+    // Disable caching for user groups - data changes frequently (new groups, status updates)
+    res.set({
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+    });
 
     res.status(200).json({
       success: true,
