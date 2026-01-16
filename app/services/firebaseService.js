@@ -11,19 +11,44 @@ function initializeFirebase() {
   }
 
   try {
-    // Path to service account key
-    const serviceAccountPath = path.join(__dirname, '../../config/firebase-service-account.json');
+    let serviceAccount = null;
     
-    // Check if service account file exists
-    const fs = require('fs');
-    if (!fs.existsSync(serviceAccountPath)) {
-      console.warn('Firebase service account key not found at:', serviceAccountPath);
-      console.warn('Note: Using Expo Push Notification API instead of Firebase directly.');
-      return;
+    // Priority 1: Check for environment variable (for Railway/cloud deployments)
+    if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+      try {
+        // Parse JSON from environment variable
+        serviceAccount = typeof process.env.FIREBASE_SERVICE_ACCOUNT === 'string' 
+          ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
+          : process.env.FIREBASE_SERVICE_ACCOUNT;
+        console.log('✅ Loading Firebase service account from environment variable');
+      } catch (parseError) {
+        console.error('❌ Failed to parse FIREBASE_SERVICE_ACCOUNT environment variable:', parseError.message);
+        console.warn('Note: Using Expo Push Notification API instead of Firebase directly.');
+        return;
+      }
+    } else {
+      // Priority 2: Check for file (for local development)
+      const serviceAccountPath = path.join(__dirname, '../../config/firebase-service-account.json');
+      const fs = require('fs');
+      
+      if (fs.existsSync(serviceAccountPath)) {
+        try {
+          serviceAccount = require(serviceAccountPath);
+          console.log('✅ Loading Firebase service account from file');
+        } catch (fileError) {
+          console.error('❌ Failed to load Firebase service account file:', fileError.message);
+          console.warn('Note: Using Expo Push Notification API instead of Firebase directly.');
+          return;
+        }
+      } else {
+        console.warn('⚠️  Firebase service account key not found.');
+        console.warn('   - File not found at:', serviceAccountPath);
+        console.warn('   - Environment variable FIREBASE_SERVICE_ACCOUNT not set');
+        console.warn('   - Note: Using Expo Push Notification API instead of Firebase directly.');
+        console.warn('   - Push notifications will still work via Expo API');
+        return;
+      }
     }
-
-    // Load service account key
-    var serviceAccount = require(serviceAccountPath);
 
     // Initialize Firebase Admin SDK
     admin.initializeApp({
@@ -31,10 +56,11 @@ function initializeFirebase() {
     });
 
     firebaseInitialized = true;
-    console.log('Firebase Admin SDK initialized successfully');
+    console.log('✅ Firebase Admin SDK initialized successfully');
   } catch (error) {
-    console.warn('Firebase Admin SDK initialization skipped:', error.message);
-    console.warn('Using Expo Push Notification API instead.');
+    console.warn('⚠️  Firebase Admin SDK initialization skipped:', error.message);
+    console.warn('   Note: Using Expo Push Notification API instead of Firebase directly.');
+    console.warn('   Push notifications will still work via Expo API.');
   }
 }
 
