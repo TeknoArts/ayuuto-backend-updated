@@ -1,0 +1,37 @@
+name: ayuuto-backend
+region: nyc
+services:
+- name: api
+  github:
+    repo: yourusername/ayuuto-backend
+    branch: main
+    deploy_on_push: true
+  run_command: npm start
+  environment_slug: node-js
+  instance_count: 1
+  instance_size_slug: basic-xxs
+  http_port: 5001
+  routes:
+  - path: /
+  envs:
+  - key: NODE_ENV
+    value: production
+  - key: PORT
+    value: "5001"
+  - key: MONGODB_URI
+    scope: RUN_TIME
+    type: SECRET
+  - key: JWT_SECRET
+    scope: RUN_TIME
+    type: SECRET
+  - key: SENDGRID_API_KEY
+    scope: RUN_TIME
+    type: SECRET
+  - key: SENDGRID_FROM_EMAIL
+    value: noreply@ayuuto.com
+  - key: FIREBASE_PROJECT_ID
+    scope: RUN_TIME
+    type: SECRET
+  - key: FIREBASE_SERVICE_ACCOUNT
+    scope: RUN_TIME
+    type: SECRET

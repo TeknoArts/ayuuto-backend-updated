@@ -3,6 +3,7 @@ const Round = require('../models/Round');
 const PaymentLog = require('../models/PaymentLog');
 const User = require('../models/User');
 const notificationService = require('../services/notificationService');
+const { sendGroupInvitationEmail } = require('../services/emailService');
 
 // @desc    Create a new group
 // @route   POST /api/groups
@@ -107,22 +108,27 @@ exports.addParticipants = async (req, res, next) => {
       if (p && typeof p === 'object') {
         let userId = p.userId || p.user || null;
         let name = (p.name || '').trim();
+        // Always capture email from request if provided
+        let participantEmail = (p.email || '').trim().toLowerCase() || null;
 
         // If no explicit userId but email provided, try to resolve an existing user
-        if (!userId && p.email) {
-          const email = String(p.email).trim().toLowerCase();
-          if (email) {
-            const existingUser = await User.findOne({ email });
-            if (existingUser) {
-              userId = existingUser._id;
-              if (!name) {
-                name = existingUser.name || existingUser.email || email;
-              }
-            } else if (!name) {
-              // Fallback: use email as name if no user found and name empty
-              name = email;
+        if (!userId && participantEmail) {
+          const existingUser = await User.findOne({ email: participantEmail });
+          if (existingUser) {
+            userId = existingUser._id;
+            if (!name) {
+              name = existingUser.name || existingUser.email || participantEmail;
             }
+            // Keep the email even if user is found (for consistency and email notifications)
+          } else if (!name) {
+            // Fallback: use email as name if no user found and name empty
+            name = participantEmail;
           }
+        }
+        
+        // Also handle case where email is provided even if userId is also provided
+        if (!participantEmail && p.email) {
+          participantEmail = String(p.email).trim().toLowerCase() || null;
         }
 
         if (!name && (p.email || p.name)) {
@@ -144,9 +150,15 @@ exports.addParticipants = async (req, res, next) => {
         normalizedParticipants.push({
           name,
           user: userId,
+          email: participantEmail || null, // Always store email if provided (for both registered and non-registered)
           order: null,
           isPaid: false,
         });
+        
+        // Debug log
+        if (participantEmail) {
+          console.log(`[GROUP] 📝 Normalized participant: name="${name}", userId=${userId || 'null'}, email="${participantEmail}"`);
+        }
         continue;
       }
 
@@ -161,10 +173,182 @@ exports.addParticipants = async (req, res, next) => {
     // Append new participants to any existing participants
     group.participants = [...group.participants, ...normalizedParticipants];
 
+    // Save group first so that new participants get _id assigned by Mongoose
     await group.save();
 
+    // Reload group to get the saved participants with their _id values and email fields
+    const savedGroup = await Group.findById(group._id);
+
+    // Get admin/creator information for email notifications
+    const admin = await User.findById(req.user.id).select('name email');
+    const adminName = admin ? admin.name : 'Group Admin';
+
+    // Send email notifications to newly added participants who have email addresses
+    const emailPromises = [];
+    console.log(`[GROUP] 📧 Processing ${normalizedParticipants.length} participant(s) for email notifications`);
+    console.log(`[GROUP] Group: ${savedGroup.name}, Admin: ${adminName}`);
+    
+    // Create a map to find saved participants by name and user
+    const savedParticipantsMap = new Map();
+    savedGroup.participants.forEach(p => {
+      const key = p.user ? p.user.toString() : p.name;
+      savedParticipantsMap.set(key, p);
+    });
+    
+    for (const participant of normalizedParticipants) {
+      // Find the saved participant to get the stored email
+      // Try multiple matching strategies to find the saved participant
+      let savedParticipant = null;
+      
+      if (participant.user) {
+        // Match by userId (registered user)
+        savedParticipant = savedGroup.participants.find(sp => 
+          sp.user && sp.user.toString() === participant.user.toString()
+        );
+      } else {
+        // For non-registered participants, try matching by email first, then by name
+        if (participant.email) {
+          savedParticipant = savedGroup.participants.find(sp => 
+            sp.email && sp.email.toLowerCase() === participant.email.toLowerCase() && !sp.user
+          );
+        }
+        // If not found by email, try by name
+        if (!savedParticipant) {
+          savedParticipant = savedGroup.participants.find(sp => 
+            sp.name === participant.name && !sp.user
+          );
+        }
+      }
+      
+      // Use saved participant's email if available (in case it was stored)
+      if (savedParticipant && savedParticipant.email && !participant.email) {
+        participant.email = savedParticipant.email;
+      }
+      // Also use saved participant's email if we have it stored there
+      if (savedParticipant && savedParticipant.email) {
+        participant.email = savedParticipant.email;
+      }
+      
+      // Try to get email from participant's user reference OR from participant's email field
+      let participantEmail = null;
+      let participantName = participant.name;
+
+      console.log(`[GROUP] Processing participant: "${participantName}", has userId: ${participant.user ? 'Yes' : 'No'}, has email: ${participant.email ? 'Yes' : 'No'}`);
+      console.log(`[GROUP] 🔍 Debug - participant.email value: ${participant.email || 'null'}, participant.user: ${participant.user || 'null'}`);
+      if (savedParticipant) {
+        console.log(`[GROUP] 🔍 Debug - savedParticipant.email: ${savedParticipant.email || 'null'}, savedParticipant.user: ${savedParticipant.user || 'null'}`);
+      } else {
+        console.log(`[GROUP] 🔍 Debug - savedParticipant: NOT FOUND`);
+      }
+
+      // Priority 1: Get email from user reference (if participant is a registered user)
+      if (participant.user) {
+        try {
+          const participantUser = await User.findById(participant.user).select('email name');
+          if (participantUser) {
+            participantEmail = participantUser.email;
+            // Use user's name if available, otherwise use participant name
+            if (participantUser.name) {
+              participantName = participantUser.name;
+            }
+            console.log(`[GROUP] ✅ Found user for participant "${participantName}": email = ${participantEmail || 'NOT SET'}`);
+          } else {
+            console.log(`[GROUP] ⚠️  User not found for userId: ${participant.user}`);
+          }
+        } catch (userLookupError) {
+          console.error(`[GROUP] ❌ Error looking up user for participant:`, userLookupError);
+        }
+      }
+      
+      // Priority 2: Get email from participant object itself (for non-registered participants)
+      if (!participantEmail && participant.email) {
+        participantEmail = participant.email.trim().toLowerCase();
+        console.log(`[GROUP] ✅ Using email from participant object: ${participantEmail} (non-registered participant)`);
+      }
+      
+      // Priority 3: Get email from saved participant (fallback)
+      if (!participantEmail && savedParticipant && savedParticipant.email) {
+        participantEmail = savedParticipant.email.trim().toLowerCase();
+        console.log(`[GROUP] ✅ Using email from saved participant: ${participantEmail} (non-registered participant)`);
+      }
+      
+      // Log if no email available
+      if (!participantEmail) {
+        console.log(`[GROUP] ⚠️  Participant "${participantName}" has no email address - cannot send email`);
+        console.log(`[GROUP]    Add participant with email field to send invitation email`);
+      }
+
+      // Ensure group has a shareCode for viewing (generate if doesn't exist) - do this ONCE before the loop
+      if (!savedGroup.shareCode) {
+        const { generateShareCode } = require('../utils/shareToken');
+        let shareCode;
+        let attempts = 0;
+        // Ensure unique share code
+        do {
+          shareCode = generateShareCode();
+          const existing = await Group.findOne({ shareCode });
+          if (!existing) break;
+          attempts++;
+          if (attempts > 10) {
+            console.error(`[GROUP] ❌ Failed to generate unique share code`);
+            break;
+          }
+        } while (true);
+        
+        if (shareCode) {
+          savedGroup.shareCode = shareCode;
+          savedGroup.isShareable = true; // Enable sharing so participants can view
+          // Set expiration (90 days)
+          savedGroup.shareTokenExpiresAt = new Date();
+          savedGroup.shareTokenExpiresAt.setDate(savedGroup.shareTokenExpiresAt.getDate() + 90);
+          await savedGroup.save();
+          console.log(`[GROUP] ✅ Generated shareCode for group: ${shareCode}`);
+        }
+      }
+
+      // Send email if we have an email address (from user OR from participant email field)
+      if (participantEmail) {
+        console.log(`[GROUP] 📤 Sending group notification email to: ${participantEmail} for participant: ${participantName}`);
+        console.log(`[GROUP] Using shareCode: ${savedGroup.shareCode || 'NOT SET'}`);
+        
+        if (!savedGroup.shareCode) {
+          console.error(`[GROUP] ❌ ERROR: shareCode is missing! Cannot send email with view link.`);
+        }
+        
+        emailPromises.push(
+          sendGroupInvitationEmail(
+            participantEmail,
+            participantName,
+            savedGroup.name,
+            adminName,
+            savedGroup._id.toString(),
+            savedGroup.shareCode
+          ).then(() => {
+            console.log(`[GROUP] ✅ Successfully sent group notification email to: ${participantEmail}`);
+          }).catch((emailError) => {
+            // Log error but don't fail the request
+            console.error(`[GROUP] ❌ Error sending group notification email to ${participantEmail}:`, emailError.message || emailError);
+          })
+        );
+      } else {
+        console.log(`[GROUP] ⚠️  Skipping email for participant "${participantName}" - no email address available`);
+      }
+    }
+
+    // Save group with invite tokens
+    await savedGroup.save();
+
+    // Send all emails in parallel (non-blocking)
+    if (emailPromises.length > 0) {
+      Promise.all(emailPromises).then(() => {
+        console.log(`[GROUP] Sent ${emailPromises.length} group invitation email(s) for group: ${savedGroup.name}`);
+      }).catch((error) => {
+        console.error('[GROUP] Error sending some invitation emails:', error);
+      });
+    }
+
     // Map participants to include id
-    const participantsWithId = group.participants.map((p) => ({
+    const participantsWithId = savedGroup.participants.map((p) => ({
       id: p._id.toString(),
       name: p.name,
       order: p.order,
@@ -273,6 +457,31 @@ exports.setCollectionDetails = async (req, res, next) => {
       });
     }
 
+    // Validate frequency - must be either 'MONTHLY' or 'WEEKLY'
+    if (frequency !== 'MONTHLY' && frequency !== 'WEEKLY') {
+      return res.status(400).json({
+        success: false,
+        message: 'Frequency must be either "MONTHLY" or "WEEKLY"',
+      });
+    }
+
+    // Validate collection date - must be between 1 and 31
+    const dateNum = parseInt(collectionDate);
+    if (isNaN(dateNum) || dateNum < 1 || dateNum > 31) {
+      return res.status(400).json({
+        success: false,
+        message: 'Collection date must be a number between 1 and 31',
+      });
+    }
+
+    // Validate amount - must be positive
+    if (amountPerPerson <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Amount per person must be greater than 0',
+      });
+    }
+
     const group = await Group.findById(groupId);
     if (!group) {
       return res.status(404).json({
@@ -291,7 +500,7 @@ exports.setCollectionDetails = async (req, res, next) => {
 
     group.amountPerPerson = amountPerPerson;
     group.frequency = frequency;
-    group.collectionDate = collectionDate;
+    group.collectionDate = dateNum;
 
     await group.save();
 
@@ -334,7 +543,7 @@ exports.getGroupDetails = async (req, res, next) => {
     }
 
     // Check if user is authorized (owner or participant)
-    const isOwner = group.createdBy._id.toString() === req.user.id;
+    const isOwner = group.createdBy && group.createdBy._id && group.createdBy._id.toString() === req.user.id;
     const isParticipant = group.participants.some((p) => {
       const byUserId = p.user && p.user.toString() === req.user.id;
       const byName =
@@ -401,6 +610,13 @@ exports.getGroupDetails = async (req, res, next) => {
       ? group.amountPerPerson * group.memberCount 
       : 0;
 
+    // Disable caching for group details - data changes frequently (payments, status, participants)
+    res.set({
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+    });
+
     res.status(200).json({
       success: true,
       data: {
@@ -416,9 +632,12 @@ exports.getGroupDetails = async (req, res, next) => {
           isOrderSet: group.isOrderSet,
           currentRecipient: currentRecipient ? currentRecipient.name : null,
           currentRecipientIndex: group.currentRecipientIndex,
-          createdBy: {
-            id: group.createdBy._id,
-            name: group.createdBy.name,
+          createdBy: group.createdBy && group.createdBy._id ? {
+            id: group.createdBy._id.toString(),
+            name: group.createdBy.name || 'Unknown',
+          } : {
+            id: null,
+            name: 'Deleted User',
           },
           status: group.status,
           createdAt: group.createdAt,
@@ -628,20 +847,24 @@ exports.updatePaymentStatus = async (req, res, next) => {
         console.error('Error creating payment log entry:', logError);
       }
 
-      // Store notification + send push to group owner when payment is marked as paid
+      // Store notification + send push to all group members when payment is marked as paid
       try {
-        await notificationService.sendNotificationToUser({
-          userId: group.createdBy,
-          title: 'Payment Received',
-          body: `${participant.name} has marked their payment as complete in ${group.name}`,
-          type: 'payment',
-          data: {
+        // Populate participants.user to get user IDs for notifications
+        await group.populate('participants.user', 'name email');
+        await group.populate('createdBy', 'name email');
+        
+        await notificationService.sendNotificationToGroup(
+          group,
+          'Payment Received',
+          `${participant.name} has marked their payment as complete in ${group.name}`,
+          'payment',
+          {
             type: 'payment',
-            groupId: group._id.toString(),
             participantId: participant._id.toString(),
             participantName: participant.name,
           },
-        });
+          participant.user ? (participant.user._id ? participant.user._id.toString() : participant.user.toString()) : null
+        );
       } catch (notificationError) {
         // Don't fail the request if notification fails
         console.error('Error sending/storing payment notification:', notificationError);
@@ -680,7 +903,7 @@ exports.getGroupLogs = async (req, res, next) => {
     }
 
     // Authorize: user must be owner or participant
-    const isOwner = group.createdBy._id.toString() === req.user.id;
+    const isOwner = group.createdBy && group.createdBy._id && group.createdBy._id.toString() === req.user.id;
     const isParticipant = group.participants.some((p) => {
       const byUserId = p.user && p.user.toString() === req.user.id;
       const byName =
@@ -731,6 +954,13 @@ exports.getGroupLogs = async (req, res, next) => {
       createdAt: log.createdAt,
     }));
 
+    // Disable caching for group logs - data changes frequently
+    res.set({
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+    });
+
     res.status(200).json({
       success: true,
       data: {
@@ -774,9 +1004,17 @@ exports.getUserGroups = async (req, res, next) => {
       ],
     })
       .populate('createdBy', 'name email')
+      .populate('participants.user', 'name email')
       .sort({ createdAt: -1 });
 
     console.log('Groups found for user:', groups.length);
+
+    // Disable caching for user groups - data changes frequently (new groups, status updates)
+    res.set({
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+    });
 
     res.status(200).json({
       success: true,
@@ -787,10 +1025,83 @@ exports.getUserGroups = async (req, res, next) => {
             ? group.amountPerPerson * group.memberCount 
             : 0;
           
+          // Handle null createdBy (user might have been deleted)
+          // Safely check if createdBy exists and has _id
+          let createdBy;
+          try {
+            if (group.createdBy && typeof group.createdBy === 'object') {
+              // Check if it's a populated user object with _id
+              if (group.createdBy._id && typeof group.createdBy._id === 'object') {
+                // CreatedBy is populated and has _id
+                createdBy = {
+                  id: group.createdBy._id.toString(),
+                  name: group.createdBy.name || 'Unknown',
+                };
+              } else if (group.createdBy.toString && typeof group.createdBy.toString === 'function') {
+                // CreatedBy is an ObjectId (not populated) - has toString method
+                createdBy = {
+                  id: group.createdBy.toString(),
+                  name: 'Unknown',
+                };
+              } else {
+                // CreatedBy object exists but is invalid (user was deleted)
+                createdBy = {
+                  id: null,
+                  name: 'Deleted User',
+                };
+              }
+            } else {
+              // CreatedBy is null or invalid (user was deleted)
+              createdBy = {
+                id: null,
+                name: 'Deleted User',
+              };
+            }
+          } catch (error) {
+            // Fallback if anything goes wrong
+            console.error('Error processing createdBy for group:', group.name, error);
+            createdBy = {
+              id: null,
+              name: 'Deleted User',
+            };
+          }
+          
+          // Map participants to include id and populated user info (if any)
+          const participantsWithId = (group.participants || []).map((p) => {
+            const hasPopulatedUser = p.user && typeof p.user === 'object' && p.user._id;
+            const userId = hasPopulatedUser
+              ? p.user._id.toString()
+              : p.user
+              ? p.user.toString()
+              : null;
+
+            const user =
+              hasPopulatedUser
+                ? {
+                    id: p.user._id.toString(),
+                    name: p.user.name,
+                    email: p.user.email,
+                  }
+                : null;
+
+            return {
+              id: p._id.toString(),
+              name: p.name,
+              order: p.order,
+              isPaid: p.isPaid,
+              paidAt: p.paidAt,
+              hasReceivedPayment: p.hasReceivedPayment || false,
+              receivedPaymentAt: p.receivedPaymentAt,
+              userId,
+              user,
+            };
+          });
+          
           return {
             id: group._id,
             name: group.name,
             memberCount: group.memberCount,
+            participants: participantsWithId,
             amountPerPerson: group.amountPerPerson,
             totalSavings: totalSavings,
             frequency: group.frequency,
@@ -798,10 +1109,7 @@ exports.getUserGroups = async (req, res, next) => {
             isOrderSet: group.isOrderSet,
             status: group.status,
             createdAt: group.createdAt,
-            createdBy: {
-              id: group.createdBy._id,
-              name: group.createdBy.name,
-            },
+            createdBy: createdBy,
           };
         }),
       },
@@ -812,6 +1120,22 @@ exports.getUserGroups = async (req, res, next) => {
 };
 
 
+// @desc    Test collection notifications (manual trigger)
+// @route   POST /api/groups/test-collection-notifications
+// @access  Private
+exports.testCollectionNotifications = async (req, res, next) => {
+  try {
+    const { checkAndSendCollectionNotifications } = require('../services/schedulerService');
+    await checkAndSendCollectionNotifications();
+    res.status(200).json({
+      success: true,
+      message: 'Collection notification check completed. Check logs for details.',
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
 // @desc    Delete a group
 // @route   DELETE /api/groups/:groupId
 // @access  Private
@@ -819,7 +1143,7 @@ exports.deleteGroup = async (req, res, next) => {
   try {
     const { groupId } = req.params;
 
-    const group = await Group.findById(groupId);
+    const group = await Group.findById(groupId).populate('participants.user', 'id');
     if (!group) {
       return res.status(404).json({
         success: false,
@@ -827,8 +1151,20 @@ exports.deleteGroup = async (req, res, next) => {
       });
     }
 
-    // Check if user owns the group
-    if (group.createdBy.toString() !== req.user.id) {
+    // Check if user owns the group OR is a participant in the group
+    const isOwner = group.createdBy.toString() === req.user.id;
+    const isParticipant = group.participants && group.participants.some((p) => {
+      if (p.user && typeof p.user === 'object' && p.user._id) {
+        // User is populated
+        return p.user._id.toString() === req.user.id;
+      } else if (p.user) {
+        // User is an ObjectId
+        return p.user.toString() === req.user.id;
+      }
+      return false;
+    });
+    
+    if (!isOwner && !isParticipant) {
       return res.status(403).json({
         success: false,
         message: 'Not authorized to delete this group',
@@ -977,32 +1313,34 @@ exports.nextRound = async (req, res, next) => {
       rounds = await Round.find({ group: group._id }).sort({ roundNumber: 1 });
     }
 
-    // Store notifications + send push
+    // Store notifications + send push to all group members
     try {
+      // Populate participants.user and createdBy to get user IDs for notifications
+      await group.populate('participants.user', 'name email');
+      await group.populate('createdBy', 'name email');
+      
       if (allNowPaidOut) {
-        await notificationService.sendNotificationToUser({
-          userId: group.createdBy,
-          title: 'Ayuuto Completed! 🎉',
-          body: `All members of ${group.name} have received their payments. The group is now complete!`,
-          type: 'group_completed',
-          data: {
+        await notificationService.sendNotificationToGroup(
+          group,
+          'Ayuuto Completed! 🎉',
+          `All members of ${group.name} have received their payments. The group is now complete!`,
+          'group_completed',
+          {
             type: 'group_completed',
-            groupId: group._id.toString(),
-          },
-        });
+          }
+        );
       } else if (nextRecipient && currentRoundDoc) {
-        await notificationService.sendNotificationToUser({
-          userId: group.createdBy,
-          title: 'Next Round Started',
-          body: `Round ${currentRoundDoc.roundNumber} has started. ${nextRecipient.name} is now the recipient.`,
-          type: 'next_round',
-          data: {
+        await notificationService.sendNotificationToGroup(
+          group,
+          'Next Round Started',
+          `Round ${currentRoundDoc.roundNumber} has started. ${nextRecipient.name} is now the recipient.`,
+          'next_round',
+          {
             type: 'next_round',
-            groupId: group._id.toString(),
             recipientName: nextRecipient.name,
             roundNumber: currentRoundDoc.roundNumber.toString(),
-          },
-        });
+          }
+        );
       }
     } catch (notificationError) {
       console.error('Error sending/storing next round notification:', notificationError);
@@ -1063,6 +1401,258 @@ exports.nextRound = async (req, res, next) => {
               }
             : null,
         },
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// @desc    Enable sharing and generate share link
+// @route   POST /api/groups/:groupId/share/enable
+// @access  Private (Group Admin only)
+exports.enableSharing = async (req, res, next) => {
+  try {
+    const { groupId } = req.params;
+    const { expiresInDays, shareSettings } = req.body;
+
+    const group = await Group.findById(groupId);
+    if (!group) {
+      return res.status(404).json({
+        success: false,
+        message: 'Group not found',
+      });
+    }
+
+    // Check authorization
+    if (group.createdBy.toString() !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only group admin can enable sharing',
+      });
+    }
+
+    // Generate token if not exists
+    if (!group.shareToken) {
+      const { generateShareToken } = require('../utils/shareToken');
+      group.shareToken = generateShareToken();
+    }
+
+    // Generate share code if not exists (short code for URL, no token visible)
+    if (!group.shareCode) {
+      const { generateShareCode } = require('../utils/shareToken');
+      let shareCode;
+      let attempts = 0;
+      // Ensure unique share code
+      do {
+        shareCode = generateShareCode();
+        const existing = await Group.findOne({ shareCode });
+        if (!existing) break;
+        attempts++;
+        if (attempts > 10) {
+          throw new Error('Failed to generate unique share code');
+        }
+      } while (true);
+      group.shareCode = shareCode;
+    }
+
+    // Set expiration (default: 90 days)
+    const expiresIn = expiresInDays || 90;
+    group.shareTokenExpiresAt = new Date();
+    group.shareTokenExpiresAt.setDate(
+      group.shareTokenExpiresAt.getDate() + expiresIn
+    );
+
+    // Enable sharing
+    group.isShareable = true;
+
+    // Update share settings if provided
+    if (shareSettings) {
+      group.shareSettings = {
+        ...group.shareSettings,
+        ...shareSettings,
+      };
+    }
+
+    await group.save();
+
+    // Generate share link using shareCode (no token in URL)
+    const { generateShareLink } = require('../utils/shareToken');
+    const shareLink = generateShareLink(group.shareCode, req);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        shareLink,
+        shareToken: group.shareToken,
+        expiresAt: group.shareTokenExpiresAt,
+        shareSettings: group.shareSettings,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// @desc    Disable sharing
+// @route   POST /api/groups/:groupId/share/disable
+// @access  Private (Group Admin only)
+exports.disableSharing = async (req, res, next) => {
+  try {
+    const { groupId } = req.params;
+
+    const group = await Group.findById(groupId);
+    if (!group) {
+      return res.status(404).json({
+        success: false,
+        message: 'Group not found',
+      });
+    }
+
+    // Check authorization
+    if (group.createdBy.toString() !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only group admin can disable sharing',
+      });
+    }
+
+    group.isShareable = false;
+    await group.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Sharing disabled successfully',
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// @desc    Get share link (if sharing is enabled)
+// @route   GET /api/groups/:groupId/share
+// @access  Private (Group Admin only)
+exports.getShareLink = async (req, res, next) => {
+  try {
+    const { groupId } = req.params;
+
+    const group = await Group.findById(groupId);
+    if (!group) {
+      return res.status(404).json({
+        success: false,
+        message: 'Group not found',
+      });
+    }
+
+    // Check authorization
+    if (group.createdBy.toString() !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only group admin can view share link',
+      });
+    }
+
+    if (!group.isShareable || !group.shareToken) {
+      return res.status(400).json({
+        success: false,
+        message: 'Sharing is not enabled for this group',
+      });
+    }
+
+    // Generate shareCode if it doesn't exist (for backward compatibility)
+    if (!group.shareCode) {
+      const { generateShareCode } = require('../utils/shareToken');
+      let shareCode;
+      let attempts = 0;
+      // Ensure unique share code
+      do {
+        shareCode = generateShareCode();
+        const existing = await Group.findOne({ shareCode });
+        if (!existing) break;
+        attempts++;
+        if (attempts > 10) {
+          throw new Error('Failed to generate unique share code');
+        }
+      } while (true);
+      group.shareCode = shareCode;
+      await group.save();
+    }
+
+    const { generateShareLink } = require('../utils/shareToken');
+    const shareLink = generateShareLink(group.shareCode, req);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        shareLink,
+        expiresAt: group.shareTokenExpiresAt,
+        shareSettings: group.shareSettings,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// @desc    Regenerate share token
+// @route   POST /api/groups/:groupId/share/regenerate
+// @access  Private (Group Admin only)
+exports.regenerateShareToken = async (req, res, next) => {
+  try {
+    const { groupId } = req.params;
+    const { expiresInDays } = req.body;
+
+    const group = await Group.findById(groupId);
+    if (!group) {
+      return res.status(404).json({
+        success: false,
+        message: 'Group not found',
+      });
+    }
+
+    // Check authorization
+    if (group.createdBy.toString() !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only group admin can regenerate share token',
+      });
+    }
+
+    // Generate new token and share code
+    const { generateShareToken, generateShareCode, generateShareLink } = require('../utils/shareToken');
+    group.shareToken = generateShareToken();
+    
+    // Generate new share code
+    let shareCode;
+    let attempts = 0;
+    do {
+      shareCode = generateShareCode();
+      const existing = await Group.findOne({ shareCode });
+      if (!existing) break;
+      attempts++;
+      if (attempts > 10) {
+        throw new Error('Failed to generate unique share code');
+      }
+    } while (true);
+    group.shareCode = shareCode;
+
+    // Set expiration
+    const expiresIn = expiresInDays || 90;
+    group.shareTokenExpiresAt = new Date();
+    group.shareTokenExpiresAt.setDate(
+      group.shareTokenExpiresAt.getDate() + expiresIn
+    );
+
+    await group.save();
+
+    const shareLink = generateShareLink(group.shareCode, req);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        shareLink,
+        shareToken: group.shareToken,
+        expiresAt: group.shareTokenExpiresAt,
       },
     });
   } catch (err) {
