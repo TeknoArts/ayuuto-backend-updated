@@ -531,50 +531,7 @@ exports.getGroupDetails = async (req, res, next) => {
   try {
     const { groupId } = req.params;
 
-    // Use direct MongoDB query to check authorization - this ensures email field is accessible
-    // Check if user is owner
-    const isOwnerCheck = await Group.findOne({
-      _id: groupId,
-      createdBy: req.user.id
-    }).lean();
-    const isOwner = !!isOwnerCheck;
-
-    // Check if user is participant using direct MongoDB query with email matching
-    // Use $elemMatch for subdocument array queries to ensure proper matching
-    const userEmail = req.user.email ? req.user.email.toLowerCase().trim() : null;
-    const participantQueryConditions = [
-      { 'participants.user': req.user.id },
-    ];
-    
-    // Add name-based matching
-    if (req.user.name) {
-      participantQueryConditions.push({
-        'participants': {
-          $elemMatch: {
-            name: { $regex: new RegExp(`^${req.user.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
-          }
-        }
-      });
-    }
-    
-    // Add email-based matching using $elemMatch (required for subdocument arrays)
-    if (userEmail) {
-      participantQueryConditions.push({
-        'participants': {
-          $elemMatch: {
-            email: { $regex: new RegExp(`^${userEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
-          }
-        }
-      });
-    }
-    
-    const isParticipantCheck = await Group.findOne({
-      _id: groupId,
-      $or: participantQueryConditions
-    }).lean();
-    const isParticipant = !!isParticipantCheck;
-
-    // Now fetch with population for the response
+    // First, fetch the group to check authorization
     const group = await Group.findById(groupId)
       .populate('createdBy', 'name email')
       .populate('participants.user', 'name email');
@@ -586,9 +543,45 @@ exports.getGroupDetails = async (req, res, next) => {
       });
     }
 
-    // Also get raw group for detailed logging
+    // Get raw group data for authorization checks
     const rawGroup = await Group.findById(groupId).lean();
     const groupObj = rawGroup || {};
+
+    // Check if user is owner
+    const isOwner = groupObj.createdBy && groupObj.createdBy.toString() === req.user.id;
+
+    // Check if user is participant by checking the raw data directly
+    const userEmail = req.user.email ? req.user.email.toLowerCase().trim() : null;
+    const userName = req.user.name ? req.user.name.toLowerCase().trim() : null;
+    
+    let isParticipant = false;
+    if (groupObj.participants && Array.isArray(groupObj.participants)) {
+      isParticipant = groupObj.participants.some((p) => {
+        // Check by userId
+        if (p.user && String(p.user) === req.user.id) {
+          return true;
+        }
+        
+        // Check by email (case-insensitive, exact match)
+        if (userEmail && p.email) {
+          const participantEmail = String(p.email).toLowerCase().trim();
+          if (participantEmail === userEmail) {
+            return true;
+          }
+        }
+        
+        // Check by name (case-insensitive, exact match)
+        if (userName && p.name) {
+          const participantName = String(p.name).toLowerCase().trim();
+          if (participantName === userName) {
+            return true;
+          }
+        }
+        
+        return false;
+      });
+    }
+
     
     // Debug logging for authorization
     console.log(`[AUTH] ==========================================`);
