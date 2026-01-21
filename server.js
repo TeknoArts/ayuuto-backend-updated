@@ -108,6 +108,16 @@ app.use('/invite', inviteRoutes);
 // Web view route (for shareable links) - uses shareCode, no token in URL
 app.get('/view/:shareCode', webViewController.serveGroupView);
 
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: 'Ayuuto Backend API is running',
+    timestamp: new Date().toISOString(),
+    database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+  });
+});
+
 // Root route - helpful message
 app.get('/', (req, res) => {
   res.status(200).json({
@@ -115,6 +125,7 @@ app.get('/', (req, res) => {
     message: 'Ayuuto Backend API is running',
     endpoints: {
       api: '/api',
+      health: '/api/health',
       viewGroup: '/view/:shareCode',
       invite: '/invite/:groupId'
     },
