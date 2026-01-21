@@ -1065,10 +1065,17 @@ exports.getGroupLogs = async (req, res, next) => {
       .populate('paidBy', 'name email')
       .sort({ paidAt: -1, createdAt: -1 });
 
-    // Map participant ids to names
-    const participantNameById = new Map();
+    // Map participant ids to display names
+    // If participant has a user account, use their name
+    // If participant doesn't have an account, use their email
+    const participantDisplayNameById = new Map();
     group.participants.forEach((p) => {
-      participantNameById.set(p._id.toString(), p.name);
+      let displayName = p.name;
+      // If participant doesn't have a user account (email-only participant), use email
+      if (!p.user && p.email) {
+        displayName = p.email;
+      }
+      participantDisplayNameById.set(p._id.toString(), displayName);
     });
 
     const mappedLogs = logs.map((log) => ({
@@ -1077,7 +1084,7 @@ exports.getGroupLogs = async (req, res, next) => {
       groupId: group._id.toString(),
       participantId: log.participantId ? log.participantId.toString() : null,
       participantName: log.participantId
-        ? participantNameById.get(log.participantId.toString()) || null
+        ? participantDisplayNameById.get(log.participantId.toString()) || null
         : null,
       amount: log.amount,
       roundNumber: log.round && typeof log.round.roundNumber === 'number'
