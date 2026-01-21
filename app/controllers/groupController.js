@@ -531,10 +531,9 @@ exports.getGroupDetails = async (req, res, next) => {
   try {
     const { groupId } = req.params;
 
-    // Use lean() to get plain JavaScript objects - this ensures email field is accessible
-    // Then manually populate users if needed
+    // Don't use lean() - we need the full Mongoose document to access subdocument fields correctly
+    // The email field on participants is a subdocument field, not a populated field
     const group = await Group.findById(groupId)
-      .lean()
       .populate('createdBy', 'name email')
       .populate('participants.user', 'name email');
 
@@ -570,7 +569,8 @@ exports.getGroupDetails = async (req, res, next) => {
     }
     
     const isParticipant = group.participants && group.participants.some((p) => {
-      // With lean(), p is already a plain object, so email should be directly accessible
+      // Access email field directly from Mongoose subdocument
+      // p.email should be accessible as a subdocument field
       const participantEmail = p.email ? String(p.email).trim().toLowerCase() : null;
       const userEmail = req.user.email ? String(req.user.email).trim().toLowerCase() : null;
       
@@ -601,14 +601,17 @@ exports.getGroupDetails = async (req, res, next) => {
           : String(p.user))
         : 'N/A';
       
+      // Additional debug: check if email field exists and its type
       console.log(`[AUTH] --- Checking participant ---`);
       console.log(`[AUTH]   Participant name: "${p.name}"`);
-      console.log(`[AUTH]   Participant email: "${participantEmail || 'N/A'}"`);
+      console.log(`[AUTH]   Participant email (raw): ${JSON.stringify(p.email)}`);
+      console.log(`[AUTH]   Participant email (processed): "${participantEmail || 'N/A'}"`);
       console.log(`[AUTH]   Participant userId: "${participantUserId}"`);
       console.log(`[AUTH]   User email: "${userEmail || 'N/A'}"`);
       console.log(`[AUTH]   byUserId: ${byUserId}`);
       console.log(`[AUTH]   byName: ${byName}`);
       console.log(`[AUTH]   byEmail: ${byEmail} (comparing "${participantEmail}" === "${userEmail}")`);
+      console.log(`[AUTH]   Participant object keys: ${Object.keys(p).join(', ')}`);
       
       return byUserId || byName || byEmail;
     });
@@ -969,6 +972,12 @@ exports.getGroupLogs = async (req, res, next) => {
 
     // Authorize: user must be owner or participant
     const isOwner = group.createdBy && group.createdBy._id && group.createdBy._id.toString() === req.user.id;
+    
+    // Debug logging for authorization
+    console.log(`[AUTH-LOGS] Checking authorization for group logs: ${groupId}`);
+    console.log(`[AUTH-LOGS] User ID: ${req.user.id}, Email: ${req.user.email || 'N/A'}`);
+    console.log(`[AUTH-LOGS] Group has ${group.participants ? group.participants.length : 0} participants`);
+    
     const isParticipant = group.participants.some((p) => {
       const byUserId = p.user && p.user.toString() === req.user.id;
       const byName =
@@ -980,6 +989,10 @@ exports.getGroupLogs = async (req, res, next) => {
       const participantEmail = p.email ? String(p.email).trim().toLowerCase() : null;
       const userEmail = req.user.email ? String(req.user.email).trim().toLowerCase() : null;
       const byEmail = participantEmail && userEmail && participantEmail === userEmail;
+      
+      console.log(`[AUTH-LOGS] Participant: name="${p.name}", email="${participantEmail || 'N/A'}", userId="${p.user || 'N/A'}"`);
+      console.log(`[AUTH-LOGS]   byUserId: ${byUserId}, byName: ${byName}, byEmail: ${byEmail}`);
+      
       return byUserId || byName || byEmail;
     });
 
