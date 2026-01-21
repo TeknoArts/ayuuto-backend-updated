@@ -531,39 +531,11 @@ exports.getGroupDetails = async (req, res, next) => {
   try {
     const { groupId } = req.params;
 
-    // Don't populate participants.user - we need direct access to participant.email field
-    // Populating might cause issues with email field access
+    // Populate createdBy and participants.user
+    // The email field is a direct property on the participant subdocument, so it should be accessible
     const group = await Group.findById(groupId)
-      .populate('createdBy', 'name email');
-    
-    // Manually populate participants.user if needed, but preserve email field
-    if (group && group.participants) {
-      const userIds = group.participants
-        .filter(p => p.user)
-        .map(p => p.user.toString());
-      
-      if (userIds.length > 0) {
-        const users = await User.find({ _id: { $in: userIds } }).select('name email');
-        const userMap = new Map(users.map(u => [u._id.toString(), u]));
-        
-        // Attach user data but keep original participant structure
-        group.participants = group.participants.map(p => {
-          if (p.user) {
-            const userId = p.user.toString();
-            const user = userMap.get(userId);
-            if (user) {
-              // Create a new object with user populated but preserve email
-              return {
-                ...p.toObject ? p.toObject() : p,
-                user: user,
-                email: p.email || null, // Preserve email field
-              };
-            }
-          }
-          return p;
-        });
-      }
-    }
+      .populate('createdBy', 'name email')
+      .populate('participants.user', 'name email');
 
     if (!group) {
       return res.status(404).json({
@@ -588,25 +560,42 @@ exports.getGroupDetails = async (req, res, next) => {
     })));
     
     const isParticipant = group.participants.some((p) => {
+      // Convert participant to plain object to ensure all fields are accessible
+      const participant = p.toObject ? p.toObject() : p;
+      
       // Check by userId (if participant is linked to a user)
-      const byUserId = p.user && (p.user.toString() === req.user.id || (typeof p.user === 'object' && p.user._id && p.user._id.toString() === req.user.id));
+      let byUserId = false;
+      if (participant.user) {
+        if (typeof participant.user === 'object' && participant.user._id) {
+          byUserId = participant.user._id.toString() === req.user.id;
+        } else {
+          byUserId = participant.user.toString() === req.user.id;
+        }
+      }
       
       // Check by name (case-insensitive)
       const byName =
-        typeof p.name === 'string' &&
+        typeof participant.name === 'string' &&
         typeof req.user.name === 'string' &&
-        p.name.toLowerCase().trim() === req.user.name.toLowerCase().trim();
+        participant.name.toLowerCase().trim() === req.user.name.toLowerCase().trim();
       
       // Check by email if participant was added by email only (no userId)
       // This is critical for email-only participants
-      const participantEmail = p.email ? String(p.email).trim().toLowerCase() : null;
+      // Access email directly from participant object (it's a subdocument field)
+      const participantEmail = participant.email ? String(participant.email).trim().toLowerCase() : null;
       const userEmail = req.user.email ? String(req.user.email).trim().toLowerCase() : null;
       const byEmail = participantEmail && userEmail && participantEmail === userEmail;
       
       // Debug logging for each participant check
-      console.log(`[AUTH] Participant: name="${p.name}", email="${participantEmail || 'N/A'}", userId="${p.user ? (typeof p.user === 'object' ? p.user._id?.toString() : p.user.toString()) : 'N/A'}"`);
+      const participantUserId = participant.user 
+        ? (typeof participant.user === 'object' && participant.user._id 
+          ? participant.user._id.toString() 
+          : participant.user.toString())
+        : 'N/A';
+      
+      console.log(`[AUTH] Participant: name="${participant.name}", email="${participantEmail || 'N/A'}", userId="${participantUserId}"`);
       console.log(`[AUTH]   User: id="${req.user.id}", email="${userEmail || 'N/A'}", name="${req.user.name || 'N/A'}"`);
-      console.log(`[AUTH]   byUserId: ${byUserId}, byName: ${byName}, byEmail: ${byEmail}`);
+      console.log(`[AUTH]   byUserId: ${byUserId}, byName: ${byName}, byEmail: ${byEmail} (participantEmail="${participantEmail}", userEmail="${userEmail}")`);
       
       return byUserId || byName || byEmail;
     });
