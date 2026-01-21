@@ -550,9 +550,26 @@ exports.getGroupDetails = async (req, res, next) => {
     // Check if user is owner
     const isOwner = groupObj.createdBy && groupObj.createdBy.toString() === req.user.id;
 
-    // Check if user is participant by checking the raw data directly
-    const userEmail = req.user.email ? req.user.email.toLowerCase().trim() : null;
+    // Ensure user email is available - fetch fresh from database if needed
+    let userEmail = req.user.email ? req.user.email.toLowerCase().trim() : null;
     const userName = req.user.name ? req.user.name.toLowerCase().trim() : null;
+    
+    // If email is missing, try to fetch it from database
+    if (!userEmail && req.user.id) {
+      console.log(`[AUTH] ⚠️  User email not in req.user, fetching from database...`);
+      try {
+        const freshUser = await User.findById(req.user.id).select('email name');
+        if (freshUser && freshUser.email) {
+          userEmail = freshUser.email.toLowerCase().trim();
+          req.user.email = freshUser.email; // Update req.user for future checks
+          console.log(`[AUTH] ✅ Fetched user email from database: "${userEmail}"`);
+        } else {
+          console.log(`[AUTH] ❌ User email not found in database for user ID: ${req.user.id}`);
+        }
+      } catch (userFetchError) {
+        console.error(`[AUTH] ❌ Error fetching user email:`, userFetchError);
+      }
+    }
     
     console.log(`[AUTH] Authorization check - User email: "${userEmail || 'N/A'}", User name: "${userName || 'N/A'}", User ID: "${req.user.id}"`);
     
