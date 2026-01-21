@@ -544,21 +544,44 @@ exports.getGroupDetails = async (req, res, next) => {
 
     // Check if user is authorized (owner or participant)
     const isOwner = group.createdBy && group.createdBy._id && group.createdBy._id.toString() === req.user.id;
+    
+    // Debug logging for authorization
+    console.log(`[AUTH] Checking authorization for user: ${req.user.id}, email: ${req.user.email || 'N/A'}`);
+    console.log(`[AUTH] Is owner: ${isOwner}`);
+    console.log(`[AUTH] Group has ${group.participants.length} participants`);
+    
     const isParticipant = group.participants.some((p) => {
       const byUserId = p.user && p.user.toString() === req.user.id;
       const byName =
         typeof p.name === 'string' &&
         typeof req.user.name === 'string' &&
         p.name.toLowerCase() === req.user.name.toLowerCase();
-      return byUserId || byName;
+      // Check by email if participant was added by email only (no userId)
+      // Normalize emails for comparison (trim, lowercase)
+      const participantEmail = p.email ? String(p.email).trim().toLowerCase() : null;
+      const userEmail = req.user.email ? String(req.user.email).trim().toLowerCase() : null;
+      const byEmail = participantEmail && userEmail && participantEmail === userEmail;
+      
+      // Debug logging for each participant check
+      if (participantEmail || userEmail) {
+        console.log(`[AUTH] Participant: name="${p.name}", email="${participantEmail || 'N/A'}", userId="${p.user ? p.user.toString() : 'N/A'}"`);
+        console.log(`[AUTH]   byUserId: ${byUserId}, byName: ${byName}, byEmail: ${byEmail}`);
+      }
+      
+      return byUserId || byName || byEmail;
     });
+    
+    console.log(`[AUTH] Is participant: ${isParticipant}`);
 
     if (!isOwner && !isParticipant) {
+      console.log(`[AUTH] ❌ Authorization failed - user is neither owner nor participant`);
       return res.status(403).json({
         success: false,
         message: 'Not authorized to view this group',
       });
     }
+    
+    console.log(`[AUTH] ✅ Authorization successful`);
 
     // Sort participants by order if order is set
     let sortedParticipants = [...group.participants];
@@ -910,7 +933,12 @@ exports.getGroupLogs = async (req, res, next) => {
         typeof p.name === 'string' &&
         typeof req.user.name === 'string' &&
         p.name.toLowerCase() === req.user.name.toLowerCase();
-      return byUserId || byName;
+      // Check by email if participant was added by email only (no userId)
+      // Normalize emails for comparison (trim, lowercase)
+      const participantEmail = p.email ? String(p.email).trim().toLowerCase() : null;
+      const userEmail = req.user.email ? String(req.user.email).trim().toLowerCase() : null;
+      const byEmail = participantEmail && userEmail && participantEmail === userEmail;
+      return byUserId || byName || byEmail;
     });
 
     if (!isOwner && !isParticipant) {
