@@ -531,9 +531,10 @@ exports.getGroupDetails = async (req, res, next) => {
   try {
     const { groupId } = req.params;
 
-    // Populate createdBy and participants.user
-    // The email field is a direct property on the participant subdocument, so it should be accessible
+    // Use lean() to get plain JavaScript objects - this ensures email field is accessible
+    // Then manually populate users if needed
     const group = await Group.findById(groupId)
+      .lean()
       .populate('createdBy', 'name email')
       .populate('participants.user', 'name email');
 
@@ -548,54 +549,66 @@ exports.getGroupDetails = async (req, res, next) => {
     const isOwner = group.createdBy && group.createdBy._id && group.createdBy._id.toString() === req.user.id;
     
     // Debug logging for authorization
-    console.log(`[AUTH] Checking authorization for user: ${req.user.id}, email: ${req.user.email || 'N/A'}`);
+    console.log(`[AUTH] ==========================================`);
+    console.log(`[AUTH] Checking authorization for group: ${groupId}`);
+    console.log(`[AUTH] User ID: ${req.user.id}`);
+    console.log(`[AUTH] User Email: ${req.user.email || 'N/A'}`);
+    console.log(`[AUTH] User Name: ${req.user.name || 'N/A'}`);
     console.log(`[AUTH] Is owner: ${isOwner}`);
-    console.log(`[AUTH] Group has ${group.participants.length} participants`);
+    console.log(`[AUTH] Group has ${group.participants ? group.participants.length : 0} participants`);
     
-    // Log all participant emails for debugging
-    console.log(`[AUTH] All participant emails:`, group.participants.map(p => ({
-      name: p.name,
-      email: p.email || 'NO EMAIL',
-      userId: p.user ? (typeof p.user === 'object' ? p.user._id?.toString() : p.user.toString()) : 'NO USER'
-    })));
+    // Log all participant emails for debugging - use lean() result directly
+    if (group.participants && group.participants.length > 0) {
+      console.log(`[AUTH] All participants:`, JSON.stringify(group.participants.map(p => ({
+        name: p.name,
+        email: p.email || 'NO EMAIL',
+        userId: p.user ? (typeof p.user === 'object' && p.user._id ? p.user._id.toString() : String(p.user)) : 'NO USER',
+        userType: typeof p.user
+      })), null, 2));
+    } else {
+      console.log(`[AUTH] ⚠️  No participants found in group!`);
+    }
     
-    const isParticipant = group.participants.some((p) => {
-      // Convert participant to plain object to ensure all fields are accessible
-      const participant = p.toObject ? p.toObject() : p;
+    const isParticipant = group.participants && group.participants.some((p) => {
+      // With lean(), p is already a plain object, so email should be directly accessible
+      const participantEmail = p.email ? String(p.email).trim().toLowerCase() : null;
+      const userEmail = req.user.email ? String(req.user.email).trim().toLowerCase() : null;
       
       // Check by userId (if participant is linked to a user)
       let byUserId = false;
-      if (participant.user) {
-        if (typeof participant.user === 'object' && participant.user._id) {
-          byUserId = participant.user._id.toString() === req.user.id;
+      if (p.user) {
+        if (typeof p.user === 'object' && p.user._id) {
+          byUserId = p.user._id.toString() === req.user.id;
         } else {
-          byUserId = participant.user.toString() === req.user.id;
+          byUserId = String(p.user) === req.user.id;
         }
       }
       
       // Check by name (case-insensitive)
       const byName =
-        typeof participant.name === 'string' &&
+        typeof p.name === 'string' &&
         typeof req.user.name === 'string' &&
-        participant.name.toLowerCase().trim() === req.user.name.toLowerCase().trim();
+        p.name.toLowerCase().trim() === req.user.name.toLowerCase().trim();
       
       // Check by email if participant was added by email only (no userId)
       // This is critical for email-only participants
-      // Access email directly from participant object (it's a subdocument field)
-      const participantEmail = participant.email ? String(participant.email).trim().toLowerCase() : null;
-      const userEmail = req.user.email ? String(req.user.email).trim().toLowerCase() : null;
       const byEmail = participantEmail && userEmail && participantEmail === userEmail;
       
       // Debug logging for each participant check
-      const participantUserId = participant.user 
-        ? (typeof participant.user === 'object' && participant.user._id 
-          ? participant.user._id.toString() 
-          : participant.user.toString())
+      const participantUserId = p.user 
+        ? (typeof p.user === 'object' && p.user._id 
+          ? p.user._id.toString() 
+          : String(p.user))
         : 'N/A';
       
-      console.log(`[AUTH] Participant: name="${participant.name}", email="${participantEmail || 'N/A'}", userId="${participantUserId}"`);
-      console.log(`[AUTH]   User: id="${req.user.id}", email="${userEmail || 'N/A'}", name="${req.user.name || 'N/A'}"`);
-      console.log(`[AUTH]   byUserId: ${byUserId}, byName: ${byName}, byEmail: ${byEmail} (participantEmail="${participantEmail}", userEmail="${userEmail}")`);
+      console.log(`[AUTH] --- Checking participant ---`);
+      console.log(`[AUTH]   Participant name: "${p.name}"`);
+      console.log(`[AUTH]   Participant email: "${participantEmail || 'N/A'}"`);
+      console.log(`[AUTH]   Participant userId: "${participantUserId}"`);
+      console.log(`[AUTH]   User email: "${userEmail || 'N/A'}"`);
+      console.log(`[AUTH]   byUserId: ${byUserId}`);
+      console.log(`[AUTH]   byName: ${byName}`);
+      console.log(`[AUTH]   byEmail: ${byEmail} (comparing "${participantEmail}" === "${userEmail}")`);
       
       return byUserId || byName || byEmail;
     });
