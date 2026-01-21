@@ -531,6 +531,27 @@ exports.getGroupDetails = async (req, res, next) => {
   try {
     const { groupId } = req.params;
 
+    // Use direct MongoDB query to check authorization - this ensures email field is accessible
+    // Check if user is owner
+    const isOwnerCheck = await Group.findOne({
+      _id: groupId,
+      createdBy: req.user.id
+    }).lean();
+    const isOwner = !!isOwnerCheck;
+
+    // Check if user is participant using direct MongoDB query with email matching
+    const userEmail = req.user.email ? req.user.email.toLowerCase().trim() : null;
+    const isParticipantCheck = await Group.findOne({
+      _id: groupId,
+      $or: [
+        { 'participants.user': req.user.id },
+        { 'participants.name': { $regex: new RegExp(`^${req.user.name?.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } },
+        ...(userEmail ? [{ 'participants.email': { $regex: new RegExp(`^${userEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } }] : [])
+      ]
+    }).lean();
+    const isParticipant = !!isParticipantCheck;
+
+    // Now fetch with population for the response
     const group = await Group.findById(groupId)
       .populate('createdBy', 'name email')
       .populate('participants.user', 'name email');
@@ -542,26 +563,69 @@ exports.getGroupDetails = async (req, res, next) => {
       });
     }
 
-    // Check if user is authorized (owner or participant)
-    const isOwner = group.createdBy && group.createdBy._id && group.createdBy._id.toString() === req.user.id;
-    const isParticipant = group.participants.some((p) => {
-      const byUserId = p.user && p.user.toString() === req.user.id;
-      const byName =
-        typeof p.name === 'string' &&
-        typeof req.user.name === 'string' &&
-        p.name.toLowerCase() === req.user.name.toLowerCase();
-      return byUserId || byName;
-    });
+    // Also get raw group for detailed logging
+    const rawGroup = await Group.findById(groupId).lean();
+    const groupObj = rawGroup || {};
+    
+    // Debug logging for authorization
+    console.log(`[AUTH] ==========================================`);
+    console.log(`[AUTH] Checking authorization for group: ${groupId}`);
+    console.log(`[AUTH] User ID: ${req.user.id}`);
+    console.log(`[AUTH] User Email: ${req.user.email || 'N/A'}`);
+    console.log(`[AUTH] User Name: ${req.user.name || 'N/A'}`);
+    console.log(`[AUTH] Is owner (MongoDB query): ${isOwner}`);
+    console.log(`[AUTH] Is participant (MongoDB query): ${isParticipant}`);
+    
+    // Log all participant emails for debugging - using raw data
+    if (groupObj.participants && groupObj.participants.length > 0) {
+      console.log(`[AUTH] All participants (raw):`, JSON.stringify(groupObj.participants.map(p => ({
+        name: p.name,
+        email: p.email || 'NO EMAIL',
+        emailType: typeof p.email,
+        userId: p.user ? p.user.toString() : 'NO USER',
+        userType: typeof p.user,
+        allKeys: Object.keys(p).join(', ')
+      })), null, 2));
+    } else {
+      console.log(`[AUTH] ⚠️  No participants found in group!`);
+    }
 
     if (!isOwner && !isParticipant) {
+      console.log(`[AUTH] ❌ Authorization failed - user is neither owner nor participant`);
+      console.log(`[AUTH] Final check - User email: "${req.user.email || 'N/A'}", User ID: "${req.user.id}"`);
+      console.log(`[AUTH] Group participants count: ${groupObj.participants ? groupObj.participants.length : 0}`);
+      console.log(`[AUTH] Group createdBy: ${groupObj.createdBy}`);
+      
+      // Additional diagnostic: Check if email exists in any participant
+      if (userEmail && groupObj.participants) {
+        const matchingParticipant = groupObj.participants.find(p => {
+          const pEmail = p.email ? String(p.email).toLowerCase().trim() : null;
+          return pEmail === userEmail;
+        });
+        console.log(`[AUTH] Direct email match in participants:`, matchingParticipant ? 'YES' : 'NO');
+        if (matchingParticipant) {
+          console.log(`[AUTH] Matching participant details:`, JSON.stringify({
+            name: matchingParticipant.name,
+            email: matchingParticipant.email,
+            userId: matchingParticipant.user
+          }));
+        } else {
+          console.log(`[AUTH] ⚠️  Email "${userEmail}" not found in any participant`);
+          console.log(`[AUTH] Available participant emails:`, groupObj.participants.map(p => p.email || 'NO EMAIL').join(', '));
+        }
+      }
+      
       return res.status(403).json({
         success: false,
         message: 'Not authorized to view this group',
       });
     }
+    
+    console.log(`[AUTH] ✅ Authorization successful`);
 
     // Sort participants by order if order is set
-    let sortedParticipants = [...group.participants];
+    // Use populated group for response (has user details populated)
+    let sortedParticipants = [...(group.participants || [])];
     if (group.isOrderSet) {
       sortedParticipants.sort((a, b) => {
         if (a.order === null) return 1;
@@ -571,7 +635,7 @@ exports.getGroupDetails = async (req, res, next) => {
     }
 
     const currentRecipient = group.isOrderSet && sortedParticipants.length > 0
-      ? sortedParticipants[group.currentRecipientIndex]
+      ? sortedParticipants[group.currentRecipientIndex || 0]
       : null;
 
     // Map participants to include id and populated user info (if any)
@@ -904,13 +968,28 @@ exports.getGroupLogs = async (req, res, next) => {
 
     // Authorize: user must be owner or participant
     const isOwner = group.createdBy && group.createdBy._id && group.createdBy._id.toString() === req.user.id;
+    
+    // Debug logging for authorization
+    console.log(`[AUTH-LOGS] Checking authorization for group logs: ${groupId}`);
+    console.log(`[AUTH-LOGS] User ID: ${req.user.id}, Email: ${req.user.email || 'N/A'}`);
+    console.log(`[AUTH-LOGS] Group has ${group.participants ? group.participants.length : 0} participants`);
+    
     const isParticipant = group.participants.some((p) => {
       const byUserId = p.user && p.user.toString() === req.user.id;
       const byName =
         typeof p.name === 'string' &&
         typeof req.user.name === 'string' &&
         p.name.toLowerCase() === req.user.name.toLowerCase();
-      return byUserId || byName;
+      // Check by email if participant was added by email only (no userId)
+      // Normalize emails for comparison (trim, lowercase)
+      const participantEmail = p.email ? String(p.email).trim().toLowerCase() : null;
+      const userEmail = req.user.email ? String(req.user.email).trim().toLowerCase() : null;
+      const byEmail = participantEmail && userEmail && participantEmail === userEmail;
+      
+      console.log(`[AUTH-LOGS] Participant: name="${p.name}", email="${participantEmail || 'N/A'}", userId="${p.user || 'N/A'}"`);
+      console.log(`[AUTH-LOGS]   byUserId: ${byUserId}, byName: ${byName}, byEmail: ${byEmail}`);
+      
+      return byUserId || byName || byEmail;
     });
 
     if (!isOwner && !isParticipant) {
@@ -996,12 +1075,24 @@ exports.getUserGroups = async (req, res, next) => {
       })));
     }
 
+    // Get user email for email-based participant matching
+    const userEmail = req.user.email ? req.user.email.toLowerCase().trim() : null;
+    console.log('getUserGroups - User Email:', userEmail);
+
+    // Build query to find groups where user is owner or participant
+    const queryConditions = [
+      { createdBy: userId },
+      { 'participants.user': userId },
+      { 'participants.name': { $regex: new RegExp(userName, 'i') } },
+    ];
+    
+    // Add email-based participant matching if user has email
+    if (userEmail) {
+      queryConditions.push({ 'participants.email': { $regex: new RegExp(`^${userEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } });
+    }
+
     const groups = await Group.find({
-      $or: [
-        { createdBy: userId },
-        { 'participants.user': userId },
-        { 'participants.name': { $regex: new RegExp(userName, 'i') } },
-      ],
+      $or: queryConditions,
     })
       .populate('createdBy', 'name email')
       .populate('participants.user', 'name email')
