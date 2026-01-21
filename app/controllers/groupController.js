@@ -554,32 +554,59 @@ exports.getGroupDetails = async (req, res, next) => {
     const userEmail = req.user.email ? req.user.email.toLowerCase().trim() : null;
     const userName = req.user.name ? req.user.name.toLowerCase().trim() : null;
     
+    console.log(`[AUTH] Authorization check - User email: "${userEmail || 'N/A'}", User name: "${userName || 'N/A'}", User ID: "${req.user.id}"`);
+    
     let isParticipant = false;
     if (groupObj.participants && Array.isArray(groupObj.participants)) {
-      isParticipant = groupObj.participants.some((p) => {
+      console.log(`[AUTH] Checking ${groupObj.participants.length} participant(s)...`);
+      
+      isParticipant = groupObj.participants.some((p, index) => {
+        console.log(`[AUTH]   Participant ${index + 1}: name="${p.name}", email="${p.email || 'NO EMAIL'}", userId="${p.user ? String(p.user) : 'NO USER'}"`);
+        
         // Check by userId
         if (p.user && String(p.user) === req.user.id) {
+          console.log(`[AUTH]     ✅ MATCH by userId: "${String(p.user)}" === "${req.user.id}"`);
           return true;
         }
         
         // Check by email (case-insensitive, exact match)
         if (userEmail && p.email) {
           const participantEmail = String(p.email).toLowerCase().trim();
+          console.log(`[AUTH]     Comparing emails: "${participantEmail}" === "${userEmail}"`);
           if (participantEmail === userEmail) {
+            console.log(`[AUTH]     ✅ MATCH by email!`);
             return true;
+          } else {
+            console.log(`[AUTH]     ❌ Email mismatch`);
+          }
+        } else {
+          if (!userEmail) {
+            console.log(`[AUTH]     ⚠️  User has no email to compare`);
+          }
+          if (!p.email) {
+            console.log(`[AUTH]     ⚠️  Participant has no email to compare`);
           }
         }
         
         // Check by name (case-insensitive, exact match)
         if (userName && p.name) {
           const participantName = String(p.name).toLowerCase().trim();
+          console.log(`[AUTH]     Comparing names: "${participantName}" === "${userName}"`);
           if (participantName === userName) {
+            console.log(`[AUTH]     ✅ MATCH by name!`);
             return true;
+          } else {
+            console.log(`[AUTH]     ❌ Name mismatch`);
           }
         }
         
+        console.log(`[AUTH]     ❌ No match for this participant`);
         return false;
       });
+      
+      console.log(`[AUTH] Final participant check result: ${isParticipant ? 'MATCHED' : 'NO MATCH'}`);
+    } else {
+      console.log(`[AUTH] ⚠️  No participants array found in group`);
     }
 
     
