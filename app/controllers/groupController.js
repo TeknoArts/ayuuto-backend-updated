@@ -551,22 +551,25 @@ exports.getGroupDetails = async (req, res, next) => {
     console.log(`[AUTH] Group has ${group.participants.length} participants`);
     
     const isParticipant = group.participants.some((p) => {
-      const byUserId = p.user && p.user.toString() === req.user.id;
+      // Check by userId (if participant is linked to a user)
+      const byUserId = p.user && (p.user.toString() === req.user.id || (typeof p.user === 'object' && p.user._id && p.user._id.toString() === req.user.id));
+      
+      // Check by name (case-insensitive)
       const byName =
         typeof p.name === 'string' &&
         typeof req.user.name === 'string' &&
-        p.name.toLowerCase() === req.user.name.toLowerCase();
+        p.name.toLowerCase().trim() === req.user.name.toLowerCase().trim();
+      
       // Check by email if participant was added by email only (no userId)
-      // Normalize emails for comparison (trim, lowercase)
+      // This is critical for email-only participants
       const participantEmail = p.email ? String(p.email).trim().toLowerCase() : null;
       const userEmail = req.user.email ? String(req.user.email).trim().toLowerCase() : null;
       const byEmail = participantEmail && userEmail && participantEmail === userEmail;
       
       // Debug logging for each participant check
-      if (participantEmail || userEmail) {
-        console.log(`[AUTH] Participant: name="${p.name}", email="${participantEmail || 'N/A'}", userId="${p.user ? p.user.toString() : 'N/A'}"`);
-        console.log(`[AUTH]   byUserId: ${byUserId}, byName: ${byName}, byEmail: ${byEmail}`);
-      }
+      console.log(`[AUTH] Participant: name="${p.name}", email="${participantEmail || 'N/A'}", userId="${p.user ? (typeof p.user === 'object' ? p.user._id?.toString() : p.user.toString()) : 'N/A'}"`);
+      console.log(`[AUTH]   User: id="${req.user.id}", email="${userEmail || 'N/A'}", name="${req.user.name || 'N/A'}"`);
+      console.log(`[AUTH]   byUserId: ${byUserId}, byName: ${byName}, byEmail: ${byEmail}`);
       
       return byUserId || byName || byEmail;
     });

@@ -188,6 +188,52 @@ exports.login = async (req, res, next) => {
 
     console.log(`[AUTH] ✅ Login successful for user: ${user.name} (${user.email})`);
 
+    // Link any email-only participants to this user (similar to registration)
+    // This handles the case where user was added to group by email before registering
+    try {
+      const normalizedEmail = user.email.toLowerCase().trim();
+      console.log(`[AUTH] 🔗 Checking for email-only participants to link for: ${normalizedEmail}`);
+      
+      const groupsToLink = await Group.find({
+        'participants.email': { $regex: new RegExp(`^${normalizedEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+      });
+
+      if (groupsToLink.length > 0) {
+        console.log(`[AUTH] ✅ Found ${groupsToLink.length} group(s) with matching email-only participants`);
+        
+        let linkedCount = 0;
+        for (const group of groupsToLink) {
+          let updated = false;
+          for (const participant of group.participants) {
+            if (
+              participant.email &&
+              participant.email.toLowerCase() === normalizedEmail &&
+              !participant.user
+            ) {
+              participant.user = user._id;
+              if (participant.name === participant.email || participant.name.toLowerCase() === normalizedEmail) {
+                participant.name = user.name;
+              }
+              updated = true;
+              linkedCount++;
+              console.log(`[AUTH]   ✅ Linked participant in group "${group.name}"`);
+            }
+          }
+          
+          if (updated) {
+            await group.save();
+          }
+        }
+        
+        if (linkedCount > 0) {
+          console.log(`[AUTH] ✅ Successfully linked ${linkedCount} email-only participant(s) to user account on login`);
+        }
+      }
+    } catch (linkError) {
+      // Don't fail login if linking fails - just log it
+      console.error(`[AUTH] ⚠️  Error linking email-only participants on login:`, linkError);
+    }
+
     res.status(200).json({
       success: true,
       data: {
