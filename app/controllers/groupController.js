@@ -650,9 +650,9 @@ exports.getGroupDetails = async (req, res, next) => {
     console.log(`[AUTH] ✅ Authorization successful`);
 
     // Sort participants by order if order is set
-    // Use groupObj for consistency
-    let sortedParticipants = [...(groupObj.participants || [])];
-    if (groupObj.isOrderSet) {
+    // Use populated group for response (has user details populated)
+    let sortedParticipants = [...(group.participants || [])];
+    if (group.isOrderSet) {
       sortedParticipants.sort((a, b) => {
         if (a.order === null) return 1;
         if (b.order === null) return -1;
@@ -660,8 +660,8 @@ exports.getGroupDetails = async (req, res, next) => {
       });
     }
 
-    const currentRecipient = groupObj.isOrderSet && sortedParticipants.length > 0
-      ? sortedParticipants[groupObj.currentRecipientIndex || 0]
+    const currentRecipient = group.isOrderSet && sortedParticipants.length > 0
+      ? sortedParticipants[group.currentRecipientIndex || 0]
       : null;
 
     // Map participants to include id and populated user info (if any)
@@ -712,24 +712,24 @@ exports.getGroupDetails = async (req, res, next) => {
       data: {
         group: {
           id: group._id,
-          name: groupObj.name,
-          memberCount: groupObj.memberCount,
+          name: group.name,
+          memberCount: group.memberCount,
           participants: participantsWithId,
-          amountPerPerson: groupObj.amountPerPerson,
-          frequency: groupObj.frequency,
-          collectionDate: groupObj.collectionDate,
+          amountPerPerson: group.amountPerPerson,
+          frequency: group.frequency,
+          collectionDate: group.collectionDate,
           totalSavings: totalSavings,
-          isOrderSet: groupObj.isOrderSet,
+          isOrderSet: group.isOrderSet,
           currentRecipient: currentRecipient ? currentRecipient.name : null,
-          currentRecipientIndex: groupObj.currentRecipientIndex,
-          createdBy: groupObj.createdBy && groupObj.createdBy._id ? {
-            id: groupObj.createdBy._id.toString(),
-            name: groupObj.createdBy.name || 'Unknown',
+          currentRecipientIndex: group.currentRecipientIndex,
+          createdBy: group.createdBy && group.createdBy._id ? {
+            id: group.createdBy._id.toString(),
+            name: group.createdBy.name || 'Unknown',
           } : {
             id: null,
             name: 'Deleted User',
           },
-          status: groupObj.status,
+          status: group.status,
           createdAt: group.createdAt,
         },
       },
