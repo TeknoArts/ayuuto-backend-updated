@@ -540,14 +540,37 @@ exports.getGroupDetails = async (req, res, next) => {
     const isOwner = !!isOwnerCheck;
 
     // Check if user is participant using direct MongoDB query with email matching
+    // Use $elemMatch for subdocument array queries to ensure proper matching
     const userEmail = req.user.email ? req.user.email.toLowerCase().trim() : null;
+    const participantQueryConditions = [
+      { 'participants.user': req.user.id },
+    ];
+    
+    // Add name-based matching
+    if (req.user.name) {
+      participantQueryConditions.push({
+        'participants': {
+          $elemMatch: {
+            name: { $regex: new RegExp(`^${req.user.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
+          }
+        }
+      });
+    }
+    
+    // Add email-based matching using $elemMatch (required for subdocument arrays)
+    if (userEmail) {
+      participantQueryConditions.push({
+        'participants': {
+          $elemMatch: {
+            email: { $regex: new RegExp(`^${userEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
+          }
+        }
+      });
+    }
+    
     const isParticipantCheck = await Group.findOne({
       _id: groupId,
-      $or: [
-        { 'participants.user': req.user.id },
-        { 'participants.name': { $regex: new RegExp(`^${req.user.name?.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } },
-        ...(userEmail ? [{ 'participants.email': { $regex: new RegExp(`^${userEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } }] : [])
-      ]
+      $or: participantQueryConditions
     }).lean();
     const isParticipant = !!isParticipantCheck;
 
