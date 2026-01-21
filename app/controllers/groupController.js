@@ -531,24 +531,27 @@ exports.getGroupDetails = async (req, res, next) => {
   try {
     const { groupId } = req.params;
 
-    // Fetch group and populate related fields
-    const group = await Group.findById(groupId)
-      .populate('createdBy', 'name email')
-      .populate('participants.user', 'name email');
-
-    if (!group) {
+    // First, do a direct MongoDB query to get raw participant data with email field
+    // This bypasses any Mongoose population issues
+    const rawGroup = await Group.findById(groupId).lean();
+    
+    if (!rawGroup) {
       return res.status(404).json({
         success: false,
         message: 'Group not found',
       });
     }
 
-    // Convert to plain object to ensure all fields are accessible
-    // This is important for subdocument fields like participant.email
-    const groupObj = group.toObject ? group.toObject() : group;
+    // Now fetch with population for the response
+    const group = await Group.findById(groupId)
+      .populate('createdBy', 'name email')
+      .populate('participants.user', 'name email');
+
+    // Use raw group data for authorization checks (email field is guaranteed to be accessible)
+    const groupObj = rawGroup;
 
     // Check if user is authorized (owner or participant)
-    const isOwner = groupObj.createdBy && groupObj.createdBy._id && groupObj.createdBy._id.toString() === req.user.id;
+    const isOwner = groupObj.createdBy && groupObj.createdBy.toString() === req.user.id;
     
     // Debug logging for authorization
     console.log(`[AUTH] ==========================================`);
@@ -559,48 +562,30 @@ exports.getGroupDetails = async (req, res, next) => {
     console.log(`[AUTH] Is owner: ${isOwner}`);
     console.log(`[AUTH] Group has ${groupObj.participants ? groupObj.participants.length : 0} participants`);
     
-    // Log all participant emails for debugging
+    // Log all participant emails for debugging - using raw data
     if (groupObj.participants && groupObj.participants.length > 0) {
-      console.log(`[AUTH] All participants:`, JSON.stringify(groupObj.participants.map(p => {
-        // Try multiple ways to access email
-        const emailValue = p.email || p.get?.('email') || (p.toObject ? p.toObject().email : null);
-        return {
-          name: p.name,
-          email: emailValue || 'NO EMAIL',
-          emailType: typeof emailValue,
-          userId: p.user ? (typeof p.user === 'object' && p.user._id ? p.user._id.toString() : String(p.user)) : 'NO USER',
-          userType: typeof p.user,
-          allKeys: Object.keys(p).join(', ')
-        };
-      }), null, 2));
+      console.log(`[AUTH] All participants (raw):`, JSON.stringify(groupObj.participants.map(p => ({
+        name: p.name,
+        email: p.email || 'NO EMAIL',
+        emailType: typeof p.email,
+        userId: p.user ? p.user.toString() : 'NO USER',
+        userType: typeof p.user,
+        allKeys: Object.keys(p).join(', ')
+      })), null, 2));
     } else {
       console.log(`[AUTH] ⚠️  No participants found in group!`);
     }
     
     const isParticipant = groupObj.participants && groupObj.participants.some((p) => {
-      // Try multiple ways to access email field from subdocument
-      let participantEmail = null;
-      if (p.email) {
-        participantEmail = String(p.email).trim().toLowerCase();
-      } else if (p.get && typeof p.get === 'function') {
-        // Try Mongoose subdocument get method
-        participantEmail = p.get('email') ? String(p.get('email')).trim().toLowerCase() : null;
-      } else if (p.toObject && typeof p.toObject === 'function') {
-        // Try converting subdocument to object
-        const pObj = p.toObject();
-        participantEmail = pObj.email ? String(pObj.email).trim().toLowerCase() : null;
-      }
-      
+      // Access email directly from raw MongoDB data (guaranteed to be accessible)
+      const participantEmail = p.email ? String(p.email).trim().toLowerCase() : null;
       const userEmail = req.user.email ? String(req.user.email).trim().toLowerCase() : null;
       
       // Check by userId (if participant is linked to a user)
+      // In raw MongoDB data, p.user is just an ObjectId string
       let byUserId = false;
       if (p.user) {
-        if (typeof p.user === 'object' && p.user._id) {
-          byUserId = p.user._id.toString() === req.user.id;
-        } else {
-          byUserId = String(p.user) === req.user.id;
-        }
+        byUserId = String(p.user) === req.user.id;
       }
       
       // Check by name (case-insensitive)
@@ -614,16 +599,12 @@ exports.getGroupDetails = async (req, res, next) => {
       const byEmail = participantEmail && userEmail && participantEmail === userEmail;
       
       // Debug logging for each participant check
-      const participantUserId = p.user 
-        ? (typeof p.user === 'object' && p.user._id 
-          ? p.user._id.toString() 
-          : String(p.user))
-        : 'N/A';
+      const participantUserId = p.user ? String(p.user) : 'N/A';
       
       // Additional debug: check if email field exists and its type
       console.log(`[AUTH] --- Checking participant ---`);
       console.log(`[AUTH]   Participant name: "${p.name}"`);
-      console.log(`[AUTH]   Participant email (raw): ${JSON.stringify(p.email)}`);
+      console.log(`[AUTH]   Participant email (raw from DB): ${JSON.stringify(p.email)}`);
       console.log(`[AUTH]   Participant email (processed): "${participantEmail || 'N/A'}"`);
       console.log(`[AUTH]   Participant userId: "${participantUserId}"`);
       console.log(`[AUTH]   User email: "${userEmail || 'N/A'}"`);
@@ -641,15 +622,23 @@ exports.getGroupDetails = async (req, res, next) => {
       console.log(`[AUTH] ❌ Authorization failed - user is neither owner nor participant`);
       console.log(`[AUTH] Final check - User email: "${req.user.email || 'N/A'}", User ID: "${req.user.id}"`);
       console.log(`[AUTH] Group participants count: ${groupObj.participants ? groupObj.participants.length : 0}`);
+      console.log(`[AUTH] Group createdBy: ${groupObj.createdBy}`);
       
-      // Additional diagnostic: try to find participant by direct MongoDB query
-      const directGroup = await Group.findById(groupId).select('participants');
-      if (directGroup && directGroup.participants) {
-        console.log(`[AUTH] Direct query participants:`, directGroup.participants.map(p => ({
-          name: p.name,
-          email: p.email || 'NO EMAIL',
-          userId: p.user ? p.user.toString() : 'NO USER'
-        })));
+      // Try MongoDB aggregation to find participant by email
+      if (req.user.email) {
+        const userEmailLower = req.user.email.toLowerCase().trim();
+        const matchingParticipant = groupObj.participants?.find(p => {
+          const pEmail = p.email ? String(p.email).toLowerCase().trim() : null;
+          return pEmail === userEmailLower;
+        });
+        console.log(`[AUTH] MongoDB aggregation check - Found matching participant:`, matchingParticipant ? 'YES' : 'NO');
+        if (matchingParticipant) {
+          console.log(`[AUTH] Matching participant details:`, JSON.stringify({
+            name: matchingParticipant.name,
+            email: matchingParticipant.email,
+            userId: matchingParticipant.user
+          }));
+        }
       }
       
       return res.status(403).json({
