@@ -531,9 +531,39 @@ exports.getGroupDetails = async (req, res, next) => {
   try {
     const { groupId } = req.params;
 
+    // Don't populate participants.user - we need direct access to participant.email field
+    // Populating might cause issues with email field access
     const group = await Group.findById(groupId)
-      .populate('createdBy', 'name email')
-      .populate('participants.user', 'name email');
+      .populate('createdBy', 'name email');
+    
+    // Manually populate participants.user if needed, but preserve email field
+    if (group && group.participants) {
+      const userIds = group.participants
+        .filter(p => p.user)
+        .map(p => p.user.toString());
+      
+      if (userIds.length > 0) {
+        const users = await User.find({ _id: { $in: userIds } }).select('name email');
+        const userMap = new Map(users.map(u => [u._id.toString(), u]));
+        
+        // Attach user data but keep original participant structure
+        group.participants = group.participants.map(p => {
+          if (p.user) {
+            const userId = p.user.toString();
+            const user = userMap.get(userId);
+            if (user) {
+              // Create a new object with user populated but preserve email
+              return {
+                ...p.toObject ? p.toObject() : p,
+                user: user,
+                email: p.email || null, // Preserve email field
+              };
+            }
+          }
+          return p;
+        });
+      }
+    }
 
     if (!group) {
       return res.status(404).json({
@@ -549,6 +579,13 @@ exports.getGroupDetails = async (req, res, next) => {
     console.log(`[AUTH] Checking authorization for user: ${req.user.id}, email: ${req.user.email || 'N/A'}`);
     console.log(`[AUTH] Is owner: ${isOwner}`);
     console.log(`[AUTH] Group has ${group.participants.length} participants`);
+    
+    // Log all participant emails for debugging
+    console.log(`[AUTH] All participant emails:`, group.participants.map(p => ({
+      name: p.name,
+      email: p.email || 'NO EMAIL',
+      userId: p.user ? (typeof p.user === 'object' ? p.user._id?.toString() : p.user.toString()) : 'NO USER'
+    })));
     
     const isParticipant = group.participants.some((p) => {
       // Check by userId (if participant is linked to a user)
