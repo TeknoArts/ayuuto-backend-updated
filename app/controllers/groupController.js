@@ -1103,15 +1103,32 @@ exports.getUserGroups = async (req, res, next) => {
     console.log('getUserGroups - User Email:', userEmail);
 
     // Build query to find groups where user is owner or participant
+    // Use $elemMatch for subdocument array queries to ensure proper matching
     const queryConditions = [
       { createdBy: userId },
       { 'participants.user': userId },
-      { 'participants.name': { $regex: new RegExp(userName, 'i') } },
     ];
     
-    // Add email-based participant matching if user has email
+    // Add name-based matching using $elemMatch
+    if (userName) {
+      queryConditions.push({
+        'participants': {
+          $elemMatch: {
+            name: { $regex: new RegExp(userName, 'i') }
+          }
+        }
+      });
+    }
+    
+    // Add email-based participant matching if user has email (use $elemMatch for subdocument arrays)
     if (userEmail) {
-      queryConditions.push({ 'participants.email': { $regex: new RegExp(`^${userEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } });
+      queryConditions.push({
+        'participants': {
+          $elemMatch: {
+            email: { $regex: new RegExp(`^${userEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
+          }
+        }
+      });
     }
 
     const groups = await Group.find({
