@@ -1024,12 +1024,24 @@ exports.getUserGroups = async (req, res, next) => {
       })));
     }
 
+    // Get user email for email-based participant matching
+    const userEmail = req.user.email ? req.user.email.toLowerCase().trim() : null;
+    console.log('getUserGroups - User Email:', userEmail);
+
+    // Build query to find groups where user is owner or participant
+    const queryConditions = [
+      { createdBy: userId },
+      { 'participants.user': userId },
+      { 'participants.name': { $regex: new RegExp(userName, 'i') } },
+    ];
+    
+    // Add email-based participant matching if user has email
+    if (userEmail) {
+      queryConditions.push({ 'participants.email': { $regex: new RegExp(`^${userEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } });
+    }
+
     const groups = await Group.find({
-      $or: [
-        { createdBy: userId },
-        { 'participants.user': userId },
-        { 'participants.name': { $regex: new RegExp(userName, 'i') } },
-      ],
+      $or: queryConditions,
     })
       .populate('createdBy', 'name email')
       .populate('participants.user', 'name email')
