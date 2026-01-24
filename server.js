@@ -94,6 +94,7 @@ const userRoutes = require('./app/routes/userRoutes');
 const publicRoutes = require('./app/routes/publicRoutes');
 const inviteRoutes = require('./app/routes/inviteRoutes');
 const webViewController = require('./app/controllers/webViewController');
+const privacyPolicyController = require('./app/controllers/privacyPolicyController');
 
 // Base API routes
 app.use('/api/auth', authRoutes);
@@ -107,6 +108,9 @@ app.use('/invite', inviteRoutes);
 
 // Web view route (for shareable links) - uses shareCode, no token in URL
 app.get('/view/:shareCode', webViewController.serveGroupView);
+
+// Privacy Policy public page
+app.get('/privacy-policy', privacyPolicyController.servePrivacyPolicy);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
@@ -127,9 +131,10 @@ app.get('/', (req, res) => {
       api: '/api',
       health: '/api/health',
       viewGroup: '/view/:shareCode',
-      invite: '/invite/:groupId'
+      invite: '/invite/:groupId',
+      privacyPolicy: '/privacy-policy'
     },
-    note: 'Use /view/{shareCode} to view a group, or /invite/{groupId} for invitations'
+    note: 'Use /view/{shareCode} to view a group, /invite/{groupId} for invitations, or /privacy-policy for privacy policy'
   });
 });
 
