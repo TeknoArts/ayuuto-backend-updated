@@ -1,5 +1,6 @@
 const path = require('path');
 const fs = require('fs');
+const { extractShareCode } = require('../utils/shareToken');
 
 // @desc    Serve web view HTML page
 // @route   GET /view/:shareCode
@@ -9,6 +10,8 @@ exports.serveGroupView = (req, res) => {
     // Decode shareCode in case it was URL encoded
     let { shareCode } = req.params;
     shareCode = decodeURIComponent(shareCode);
+    // Extract only the code when full share text was passed (e.g. "LJBTZQCP Shared from Ayuuto App http://.../view/LJBTZQCP")
+    shareCode = extractShareCode(shareCode);
     
     // Normalize shareCode to uppercase (share codes are stored in uppercase)
     shareCode = shareCode.toUpperCase().trim();

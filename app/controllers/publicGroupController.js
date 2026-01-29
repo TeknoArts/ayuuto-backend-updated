@@ -1,6 +1,7 @@
 const Group = require('../models/Group');
 const Round = require('../models/Round');
 const PaymentLog = require('../models/PaymentLog');
+const { extractShareCode } = require('../utils/shareToken');
 
 // @desc    View group by share code (Public) - No token in URL
 // @route   GET /api/public/groups/view/:shareCode
@@ -18,6 +19,8 @@ exports.viewGroupByShareCode = async (req, res, next) => {
     // Decode shareCode in case it was URL encoded
     let { shareCode } = req.params;
     shareCode = decodeURIComponent(shareCode);
+    // Extract only the code when full share text was passed (e.g. "LJBTZQCP Shared from Ayuuto App http://.../view/LJBTZQCP")
+    shareCode = extractShareCode(shareCode);
     
     // Normalize shareCode - convert to uppercase (share codes are stored in uppercase)
     shareCode = shareCode.toUpperCase().trim();

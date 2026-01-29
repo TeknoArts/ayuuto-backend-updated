@@ -1,6 +1,27 @@
 const crypto = require('crypto');
 
 /**
+ * Extract share code from param when full share text was passed
+ * (e.g. "LJBTZQCP Shared from Ayuuto App http://.../view/LJBTZQCP" -> "LJBTZQCP")
+ * Share codes are 8 chars, alphanumeric (base64url).
+ */
+function extractShareCode(param) {
+  if (!param || typeof param !== 'string') return param || '';
+  const s = param.trim();
+  // If it contains "/view/", take the code after the last "/view/"
+  const viewMatch = s.match(/\/view\/([A-Za-z0-9_-]+)/g);
+  if (viewMatch && viewMatch.length > 0) {
+    const last = viewMatch[viewMatch.length - 1];
+    const code = last.replace(/^\/view\//, '').split(/[\s?&#]/)[0];
+    if (code && /^[A-Za-z0-9_-]{6,20}$/.test(code)) return code;
+  }
+  // Otherwise take the first alphanumeric segment (share code format)
+  const first = s.split(/[\s/]/)[0];
+  if (first && /^[A-Za-z0-9_-]{6,20}$/.test(first)) return first;
+  return s;
+}
+
+/**
  * Generate a secure, URL-safe share token
  * @returns {string} Base64URL encoded token
  */
@@ -105,4 +126,4 @@ function generateShareLink(shareCode, req = null) {
   return `${baseUrl}/view/${shareCode}`;
 }
 
-module.exports = { generateShareToken, generateShareCode, generateShareLink };
+module.exports = { generateShareToken, generateShareCode, generateShareLink, extractShareCode };
