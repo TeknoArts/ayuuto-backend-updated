@@ -102,9 +102,12 @@ exports.viewGroupByShareCode = async (req, res, next) => {
     });
     
     // Compute completion from participants so shared link always shows correct state
-    const isCompleted = group.status === 'COMPLETED' ||
-      (group.participants && group.participants.length > 0 &&
-        group.participants.every(p => p.hasReceivedPayment === true));
+    // Include "all isPaid" so shared link shows completed when last recipient was just marked paid (before Next Round clicked)
+    const allHasReceivedPayment = group.participants && group.participants.length > 0 &&
+      group.participants.every(p => p.hasReceivedPayment === true);
+    const allMarkedPaid = group.participants && group.participants.length > 0 &&
+      group.participants.every(p => p.isPaid === true);
+    const isCompleted = group.status === 'COMPLETED' || allHasReceivedPayment || allMarkedPaid;
 
     const response = {
       success: true,

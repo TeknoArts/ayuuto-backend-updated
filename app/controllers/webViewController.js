@@ -737,10 +737,11 @@ function renderGroup(group) {
         : 0;
     document.getElementById('amount-text').textContent = totalSavings.toString();
     
-    // Badge (admin or completed) - use isCompleted from API so shared link shows fresh state
+    // Badge (admin or completed) - use isCompleted from API; fallback to all isPaid so shared link shows completed when last person marked paid
     const badgeContainer = document.getElementById('badge-container');
     const allPaidOut = group.isCompleted === true || group.status === 'COMPLETED' ||
-        (group.participants && group.participants.every(p => p.hasReceivedPayment === true));
+        (group.participants && group.participants.every(p => p.hasReceivedPayment === true)) ||
+        (group.participants && group.participants.every(p => p.isPaid === true));
     if (allPaidOut) {
         badgeContainer.innerHTML = '<div class="completed-badge"><div class="completed-text">COMPLETED</div></div>';
     } else {
@@ -790,7 +791,8 @@ function renderParticipants(participants, group) {
     
     const currentRecipientIndex = group.currentRecipientIndex || 0;
     const allPaidOut = group.isCompleted === true || group.status === 'COMPLETED' ||
-        participants.every(p => p.hasReceivedPayment === true);
+        participants.every(p => p.hasReceivedPayment === true) ||
+        participants.every(p => p.isPaid === true);
     
     const list = document.getElementById('participants-list');
     list.innerHTML = sorted.map((p, index) => {
