@@ -132,9 +132,8 @@ exports.viewGroupByShareCode = async (req, res, next) => {
                 name: p.name,
                 order: p.order,
                 isPaid: shareSettings.showPaymentStatus ? p.isPaid : undefined,
-                hasReceivedPayment: shareSettings.showPaymentStatus 
-                  ? p.hasReceivedPayment 
-                  : isCompleted, // When completed, show as paid out so badge renders
+                // When group completed, always set true for every participant so PAID OUT badge shows for all in web view
+                hasReceivedPayment: isCompleted ? true : (shareSettings.showPaymentStatus ? (p.hasReceivedPayment === true) : false),
               }))
             : [],
           rounds: roundsWithRecipient,

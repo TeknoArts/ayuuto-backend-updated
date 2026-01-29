@@ -790,9 +790,10 @@ function renderParticipants(participants, group) {
         : participants;
     
     const currentRecipientIndex = group.currentRecipientIndex || 0;
-    const allPaidOut = group.isCompleted === true || group.status === 'COMPLETED' ||
-        participants.every(p => p.hasReceivedPayment === true) ||
-        participants.every(p => p.isPaid === true);
+    const groupCompleted = group.isCompleted === true || group.status === 'COMPLETED';
+    const allPaidOut = groupCompleted ||
+        (participants.length > 0 && participants.every(p => p.hasReceivedPayment === true)) ||
+        (participants.length > 0 && participants.every(p => p.isPaid === true));
     
     const list = document.getElementById('participants-list');
     list.innerHTML = sorted.map((p, index) => {
@@ -807,8 +808,9 @@ function renderParticipants(participants, group) {
             orderNumberHtml = \`<div class="order-number \${orderPaidClass}"><div class="order-number-text">\${p.order + 1}</div></div>\`;
         }
         
+        // Show PAID OUT badge for every participant when group is completed, or when this participant received payout
         let paidOutTag = '';
-        if (hasReceivedPayment) {
+        if (groupCompleted || hasReceivedPayment || allPaidOut) {
             paidOutTag = '<div class="paid-out-tag-inline"><div class="paid-out-text-inline">PAID OUT</div></div>';
         }
         
