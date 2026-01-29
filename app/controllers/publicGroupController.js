@@ -7,6 +7,14 @@ const PaymentLog = require('../models/PaymentLog');
 // @access  Public
 exports.viewGroupByShareCode = async (req, res, next) => {
   try {
+    // Set no-cache immediately so proxies/browsers never cache this response
+    res.set({
+      'Cache-Control': 'private, no-cache, no-store, must-revalidate, max-age=0',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+      'Surrogate-Control': 'no-store',
+    });
+
     // Decode shareCode in case it was URL encoded
     let { shareCode } = req.params;
     shareCode = decodeURIComponent(shareCode);
@@ -23,10 +31,11 @@ exports.viewGroupByShareCode = async (req, res, next) => {
       });
     }
 
-    // Find group by shareCode (normalized to uppercase - share codes are stored in uppercase)
+    // Find group by shareCode - use lean() for fresh read from DB
     const group = await Group.findOne({ shareCode })
       .populate('createdBy', 'name email')
-      .populate('participants.user', 'name email');
+      .populate('participants.user', 'name email')
+      .lean();
 
     if (!group) {
       return res.status(404).json({
@@ -89,6 +98,11 @@ exports.viewGroupByShareCode = async (req, res, next) => {
       };
     });
     
+    // Compute completion from participants so shared link always shows correct state
+    const isCompleted = group.status === 'COMPLETED' ||
+      (group.participants && group.participants.length > 0 &&
+        group.participants.every(p => p.hasReceivedPayment === true));
+
     const response = {
       success: true,
       data: {
@@ -101,7 +115,8 @@ exports.viewGroupByShareCode = async (req, res, next) => {
             : undefined,
           frequency: group.frequency,
           collectionDate: group.collectionDate,
-          status: group.status || 'ACTIVE', // Always show status, default to ACTIVE if not set
+          status: isCompleted ? 'COMPLETED' : (group.status || 'ACTIVE'),
+          isCompleted, // So web view can show COMPLETED badge even when payment status hidden
           createdAt: group.createdAt,
           createdBy: group.createdBy ? {
             name: group.createdBy.name,
@@ -113,7 +128,7 @@ exports.viewGroupByShareCode = async (req, res, next) => {
                 isPaid: shareSettings.showPaymentStatus ? p.isPaid : undefined,
                 hasReceivedPayment: shareSettings.showPaymentStatus 
                   ? p.hasReceivedPayment 
-                  : undefined,
+                  : isCompleted, // When completed, show as paid out so badge renders
               }))
             : [],
           rounds: roundsWithRecipient,
@@ -137,14 +152,6 @@ exports.viewGroupByShareCode = async (req, res, next) => {
         },
       },
     };
-
-    // Disable all caching - shared link must always return fresh data
-    res.set({
-      'Cache-Control': 'private, no-cache, no-store, must-revalidate, max-age=0',
-      'Pragma': 'no-cache',
-      'Expires': '0',
-      'Surrogate-Control': 'no-store',
-    });
 
     res.status(200).json(response);
   } catch (err) {

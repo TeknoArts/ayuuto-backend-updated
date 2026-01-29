@@ -666,9 +666,10 @@ async function loadGroup() {
         // Use shareCode instead of token - no token in URL
         // URL encode the shareCode to handle special characters
         const encodedShareCode = encodeURIComponent(shareCode);
-        // Add timestamp to prevent browser caching
+        // Strong cache buster so shared link always gets fresh data
         const timestamp = new Date().getTime();
-        const apiUrl = \`\${API_BASE_URL}/groups/view/\${encodedShareCode}?_t=\${timestamp}\`;
+        const r = Math.random().toString(36).slice(2);
+        const apiUrl = \`\${API_BASE_URL}/groups/view/\${encodedShareCode}?_t=\${timestamp}&_r=\${r}\`;
         
         console.log('Loading group with shareCode:', shareCode);
         console.log('API URL:', apiUrl);
@@ -739,9 +740,10 @@ function renderGroup(group) {
         : 0;
     document.getElementById('amount-text').textContent = totalSavings.toString();
     
-    // Badge (admin or completed)
+    // Badge (admin or completed) - use isCompleted from API so shared link shows fresh state
     const badgeContainer = document.getElementById('badge-container');
-    const allPaidOut = group.participants && group.participants.every(p => p.hasReceivedPayment === true);
+    const allPaidOut = group.isCompleted === true || group.status === 'COMPLETED' ||
+        (group.participants && group.participants.every(p => p.hasReceivedPayment === true));
     if (allPaidOut) {
         badgeContainer.innerHTML = '<div class="completed-badge"><div class="completed-text">COMPLETED</div></div>';
     } else {
@@ -790,7 +792,8 @@ function renderParticipants(participants, group) {
         : participants;
     
     const currentRecipientIndex = group.currentRecipientIndex || 0;
-    const allPaidOut = participants.every(p => p.hasReceivedPayment === true);
+    const allPaidOut = group.isCompleted === true || group.status === 'COMPLETED' ||
+        participants.every(p => p.hasReceivedPayment === true);
     
     const list = document.getElementById('participants-list');
     list.innerHTML = sorted.map((p, index) => {

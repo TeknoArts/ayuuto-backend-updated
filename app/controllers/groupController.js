@@ -1463,6 +1463,11 @@ exports.nextRound = async (req, res, next) => {
       participant.paidAt = null;
     });
 
+    // Mark group as COMPLETED when all participants have received payment (shared link shows fresh state)
+    if (allNowPaidOut) {
+      group.status = 'COMPLETED';
+    }
+
     await group.save();
 
     // Update Round documents to reflect progression to the next round
