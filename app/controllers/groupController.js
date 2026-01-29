@@ -903,7 +903,7 @@ exports.spinForOrder = async (req, res, next) => {
   }
 };
 
-// @desc    Update payment status
+// @desc    Update payment status (optimized: minimal read, atomic update, respond first, then log/notify in background)
 // @route   PUT /api/groups/:groupId/participants/:participantId/payment
 // @access  Private
 exports.updatePaymentStatus = async (req, res, next) => {
@@ -911,7 +911,10 @@ exports.updatePaymentStatus = async (req, res, next) => {
     const { groupId, participantId } = req.params;
     const { isPaid } = req.body;
 
-    const group = await Group.findById(groupId);
+    // Minimal read: only fields needed for auth and response
+    const group = await Group.findById(groupId)
+      .select('createdBy participants amountPerPerson name')
+      .lean();
     if (!group) {
       return res.status(404).json({
         success: false,
@@ -919,15 +922,17 @@ exports.updatePaymentStatus = async (req, res, next) => {
       });
     }
 
-    // Check if user owns the group
-    if (group.createdBy.toString() !== req.user.id) {
+    const createdById = group.createdBy && (group.createdBy._id ? group.createdBy._id.toString() : group.createdBy.toString());
+    if (createdById !== req.user.id) {
       return res.status(403).json({
         success: false,
         message: 'Not authorized to update payment status',
       });
     }
 
-    const participant = group.participants.id(participantId);
+    const participant = (group.participants || []).find(
+      (p) => (p._id && p._id.toString() === participantId) || p._id === participantId
+    );
     if (!participant) {
       return res.status(404).json({
         success: false,
@@ -935,77 +940,85 @@ exports.updatePaymentStatus = async (req, res, next) => {
       });
     }
 
-    participant.isPaid = isPaid;
-    if (isPaid) {
-      participant.paidAt = new Date();
-    } else {
-      participant.paidAt = null;
+    const paidAtValue = isPaid ? new Date() : null;
+    // Atomic update: only the participant subdocument, no full document load/save
+    const result = await Group.updateOne(
+      { _id: groupId, 'participants._id': participant._id },
+      { $set: { 'participants.$.isPaid': isPaid, 'participants.$.paidAt': paidAtValue } }
+    );
+    if (result.modifiedCount === 0) {
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to update payment status',
+      });
     }
 
-    await group.save();
-
-    if (isPaid) {
-      // Append payment log for this contribution into the current round
-      try {
-        // Find the current round (prefer IN_PROGRESS, fallback to highest roundNumber)
-        let currentRound = await Round.findOne({
-          group: group._id,
-          status: 'IN_PROGRESS',
-        });
-
-        if (!currentRound) {
-          currentRound = await Round.findOne({ group: group._id }).sort({ roundNumber: -1 });
-        }
-
-        if (currentRound) {
-          await PaymentLog.create({
-            group: group._id,
-            round: currentRound._id,
-            participantId: participant._id,
-            amount: group.amountPerPerson || 0,
-            paidBy: req.user.id,
-            method: 'OTHER',
-          });
-        }
-      } catch (logError) {
-        console.error('Error creating payment log entry:', logError);
-      }
-
-      // Store notification + send push to all group members when payment is marked as paid
-      try {
-        // Populate participants.user to get user IDs for notifications
-        await group.populate('participants.user', 'name email');
-        await group.populate('createdBy', 'name email');
-        
-        await notificationService.sendNotificationToGroup(
-          group,
-          'Payment Received',
-          `${participant.name} has marked their payment as complete in ${group.name}`,
-          'payment',
-          {
-            type: 'payment',
-            participantId: participant._id.toString(),
-            participantName: participant.name,
-          },
-          participant.user ? (participant.user._id ? participant.user._id.toString() : participant.user.toString()) : null
-        );
-      } catch (notificationError) {
-        // Don't fail the request if notification fails
-        console.error('Error sending/storing payment notification:', notificationError);
-      }
-    }
-
+    // Respond immediately so the UI can close the loader quickly
     res.status(200).json({
       success: true,
       data: {
         participant: {
           id: participant._id,
           name: participant.name,
-          isPaid: participant.isPaid,
-          paidAt: participant.paidAt,
+          isPaid: !!isPaid,
+          paidAt: paidAtValue,
         },
       },
     });
+
+    // Run payment log and notifications in background (do not block the response)
+    if (isPaid) {
+      const gId = group._id;
+      const pId = participant._id;
+      const pName = participant.name || '';
+      const amount = group.amountPerPerson || 0;
+      const userId = req.user.id;
+
+      setImmediate(async () => {
+        try {
+          let currentRound = await Round.findOne({ group: gId, status: 'IN_PROGRESS' }).lean();
+          if (!currentRound) {
+            currentRound = await Round.findOne({ group: gId }).sort({ roundNumber: -1 }).lean();
+          }
+          if (currentRound) {
+            await PaymentLog.create({
+              group: gId,
+              round: currentRound._id,
+              participantId: pId,
+              amount,
+              paidBy: userId,
+              method: 'OTHER',
+            });
+          }
+        } catch (logError) {
+          console.error('Error creating payment log entry:', logError);
+        }
+
+        try {
+          const groupForNotify = await Group.findById(gId)
+            .populate('participants.user', '_id')
+            .populate('createdBy', '_id')
+            .select('name participants createdBy')
+            .lean();
+          if (groupForNotify) {
+            await notificationService.sendNotificationToGroup(
+              groupForNotify,
+              'Payment Received',
+              `${pName} has marked their payment as complete in ${groupForNotify.name}`,
+              'payment',
+              {
+                type: 'payment',
+                participantId: pId.toString(),
+                participantName: pName,
+              },
+              participant.user ? String(participant.user._id || participant.user) : null
+            );
+          }
+        } catch (notificationError) {
+          console.error('Error sending/storing payment notification:', notificationError);
+        }
+      });
+    }
   } catch (err) {
     next(err);
   }
