@@ -138,12 +138,12 @@ exports.viewGroupByShareCode = async (req, res, next) => {
       },
     };
 
-    // Disable caching for group view - data changes frequently (payments, status)
+    // Disable all caching - shared link must always return fresh data
     res.set({
-      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Cache-Control': 'private, no-cache, no-store, must-revalidate, max-age=0',
       'Pragma': 'no-cache',
       'Expires': '0',
-      'ETag': false, // Disable ETag to prevent 304 responses
+      'Surrogate-Control': 'no-store',
     });
 
     res.status(200).json(response);

@@ -891,6 +891,19 @@ function showError(message) {
 }
 
 
+// Refetch when user returns to the tab so shared link always shows fresh data
+let wasHidden = false;
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && wasHidden && shareCode) {
+        loadGroup();
+    }
+    if (document.visibilityState === 'hidden') wasHidden = true;
+});
+// Refetch when page is restored from back-forward cache (e.g. user pressed back)
+window.addEventListener('pageshow', (e) => {
+    if (e.persisted && shareCode) loadGroup();
+});
+
 // Wait for DOM to be ready
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
@@ -911,13 +924,13 @@ if (document.readyState === 'loading') {
 </body>
 </html>`;
 
-    // Disable caching for HTML page - data changes frequently (payments, status, participants)
+    // Disable all caching for HTML page - shared link must always show fresh data
     res.set({
       'Content-Type': 'text/html',
-      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Cache-Control': 'private, no-cache, no-store, must-revalidate, max-age=0',
       'Pragma': 'no-cache',
       'Expires': '0',
-      'ETag': false, // Disable ETag to prevent 304 responses
+      'Surrogate-Control': 'no-store',
     });
     res.send(html);
   } catch (err) {
