@@ -909,7 +909,7 @@ exports.spinForOrder = async (req, res, next) => {
 exports.updatePaymentStatus = async (req, res, next) => {
   try {
     const { groupId, participantId } = req.params;
-    const { isPaid } = req.body;
+    const { isPaid, source } = req.body; // source: 'checkbox' | 'pay_now' for different notification messages
 
     // Minimal read: only fields needed for auth and response
     const group = await Group.findById(groupId)
@@ -973,6 +973,8 @@ exports.updatePaymentStatus = async (req, res, next) => {
       const pName = participant.name || '';
       const amount = group.amountPerPerson || 0;
       const userId = req.user.id;
+      const adminName = req.user.name || req.user.email || 'Admin';
+      const isPayNow = source === 'pay_now';
 
       setImmediate(async () => {
         try {
@@ -1001,10 +1003,13 @@ exports.updatePaymentStatus = async (req, res, next) => {
             .select('name participants createdBy')
             .lean();
           if (groupForNotify) {
+            const notificationBody = isPayNow
+              ? `${pName} has been Paid by ${adminName}.`
+              : `${adminName}has marked ${pName} to Paid in ${groupForNotify.name}.`;
             await notificationService.sendNotificationToGroup(
               groupForNotify,
               'Payment Received',
-              `${pName} has marked their payment as complete in ${groupForNotify.name}`,
+              notificationBody,
               'payment',
               {
                 type: 'payment',
