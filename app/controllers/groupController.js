@@ -1005,7 +1005,7 @@ exports.updatePaymentStatus = async (req, res, next) => {
           if (groupForNotify) {
             const notificationBody = isPayNow
               ? `${pName} has been Paid by ${adminName}.`
-              : `${adminName} has marked ${pName} to Paid in ${groupForNotify.name}.`;
+              : `Payment from ${pName} has been marked as Paid in ${groupForNotify.name}.`;
             // Checkbox: do not send to group admin (who toggled). Pay Now: do not send to the participant who was paid.
             const excludeUserId = isPayNow
               ? (participant.user ? String(participant.user._id || participant.user) : null)
