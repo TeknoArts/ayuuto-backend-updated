@@ -803,9 +803,13 @@ exports.getGroupDetails = async (req, res, next) => {
             }
           : null;
 
+      // Email: participant's stored email, or from populated user (for registered participants)
+      const email = p.email || (hasPopulatedUser && p.user && p.user.email) || null;
+
       return {
         id: p._id.toString(),
         name: p.name,
+        email,
         order: p.order,
         isPaid: p.isPaid,
         paidAt: p.paidAt,
