@@ -5,6 +5,8 @@ const GroupActivityLog = require('../models/GroupActivityLog');
 const User = require('../models/User');
 const notificationService = require('../services/notificationService');
 const { sendGroupInvitationEmail } = require('../services/emailService');
+const { getPublicGroupData } = require('./publicGroupController');
+const sseService = require('../services/sseService');
 
 // @desc    Create a new group with participants and details (simplified flow)
 // @route   POST /api/groups
@@ -957,6 +959,20 @@ exports.spinForOrder = async (req, res, next) => {
         ? group.amountPerPerson * group.memberCount
         : 0;
 
+    // Broadcast real-time update to public group view (SSE)
+    if (group.shareCode && group.isShareable) {
+      setImmediate(async () => {
+        try {
+          const groupData = await getPublicGroupData(group.shareCode);
+          if (groupData) {
+            sseService.broadcastGroupUpdate(group.shareCode, groupData);
+          }
+        } catch (broadcastErr) {
+          console.error('Error broadcasting group update:', broadcastErr);
+        }
+      });
+    }
+
     res.status(200).json({
       success: true,
       data: {
@@ -1004,7 +1020,7 @@ exports.updatePaymentStatus = async (req, res, next) => {
 
     // Minimal read: only fields needed for auth, response, and payment log (memberCount for group total on Pay Now)
     const group = await Group.findById(groupId)
-      .select('createdBy participants amountPerPerson memberCount name')
+      .select('createdBy participants amountPerPerson memberCount name shareCode isShareable')
       .lean();
     if (!group) {
       return res.status(404).json({
@@ -1111,6 +1127,20 @@ exports.updatePaymentStatus = async (req, res, next) => {
           }
         } catch (notificationError) {
           console.error('Error sending/storing payment notification:', notificationError);
+        }
+      });
+    }
+
+    // Broadcast real-time update to public group view (SSE)
+    if (group.shareCode && group.isShareable) {
+      setImmediate(async () => {
+        try {
+          const groupData = await getPublicGroupData(group.shareCode);
+          if (groupData) {
+            sseService.broadcastGroupUpdate(group.shareCode, groupData);
+          }
+        } catch (broadcastErr) {
+          console.error('Error broadcasting group update:', broadcastErr);
         }
       });
     }
@@ -1690,6 +1720,20 @@ exports.nextRound = async (req, res, next) => {
     const totalSavings = group.amountPerPerson && group.memberCount 
       ? group.amountPerPerson * group.memberCount 
       : 0;
+
+    // Broadcast real-time update to public group view (SSE)
+    if (group.shareCode && group.isShareable) {
+      setImmediate(async () => {
+        try {
+          const groupData = await getPublicGroupData(group.shareCode);
+          if (groupData) {
+            sseService.broadcastGroupUpdate(group.shareCode, groupData);
+          }
+        } catch (broadcastErr) {
+          console.error('Error broadcasting group update:', broadcastErr);
+        }
+      });
+    }
 
     res.status(200).json({
       success: true,

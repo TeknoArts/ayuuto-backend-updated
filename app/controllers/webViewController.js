@@ -754,8 +754,8 @@ async function loadGroup() {
         // Render the group view so the page always shows content (no auto redirect)
         renderGroup(data.data.group);
         hideLoading();
-        // Start polling so webview updates after Pay Now (not only after Next Round or manual refresh)
-        if (document.visibilityState === 'visible') startPolling();
+        // Connect SSE for real-time updates when page is visible
+        if (document.visibilityState === 'visible') connectSSE();
     } catch (error) {
         console.error('Error loading group:', error);
         showError(error.message || 'Failed to load group. Please check the link and try again.');
@@ -960,37 +960,66 @@ function showError(message) {
 }
 
 
-// Poll interval (ms) - refetch so webview updates after Pay Now, not only after Next Round
-var refreshIntervalId = null;
-var POLL_INTERVAL_MS = 20000;
+// SSE (Server-Sent Events) for real-time updates - no polling
+var sseSource = null;
+var sseReconnectDelay = 2000;
+var sseReconnectTimer = null;
 
-function startPolling() {
+function connectSSE() {
     if (!shareCode) return;
-    if (refreshIntervalId) return;
-    refreshIntervalId = setInterval(function() {
-        if (document.visibilityState === 'visible' && shareCode) loadGroup();
-    }, POLL_INTERVAL_MS);
-}
-function stopPolling() {
-    if (refreshIntervalId) {
-        clearInterval(refreshIntervalId);
-        refreshIntervalId = null;
+    disconnectSSE();
+    var streamUrl = API_BASE_URL + '/groups/view/' + encodeURIComponent(shareCode) + '/stream';
+    try {
+        sseSource = new EventSource(streamUrl);
+        sseSource.addEventListener('group_update', function(e) {
+            try {
+                var updatedGroup = JSON.parse(e.data);
+                renderGroup(updatedGroup);
+            } catch (err) {
+                console.error('SSE: Failed to parse group_update:', err);
+            }
+        });
+        sseSource.onerror = function() {
+            sseSource.close();
+            sseSource = null;
+            if (document.visibilityState === 'visible') {
+                sseReconnectTimer = setTimeout(function() {
+                    connectSSE();
+                }, sseReconnectDelay);
+            }
+        };
+    } catch (err) {
+        console.error('SSE: Failed to connect:', err);
+        if (document.visibilityState === 'visible') {
+            sseReconnectTimer = setTimeout(function() {
+                connectSSE();
+            }, sseReconnectDelay);
+        }
     }
 }
 
-// Refetch when tab becomes visible; start polling so Pay Now updates show without manual refresh
+function disconnectSSE() {
+    if (sseReconnectTimer) {
+        clearTimeout(sseReconnectTimer);
+        sseReconnectTimer = null;
+    }
+    if (sseSource) {
+        sseSource.close();
+        sseSource = null;
+    }
+}
+
 document.addEventListener('visibilitychange', function() {
     if (document.visibilityState === 'visible' && shareCode) {
         loadGroup();
-        startPolling();
+        connectSSE();
     } else {
-        stopPolling();
+        disconnectSSE();
     }
 });
-// Refetch when page is restored from back-forward cache (e.g. user pressed back)
 window.addEventListener('pageshow', function(e) {
     if (e.persisted && shareCode) loadGroup();
-    if (document.visibilityState === 'visible' && shareCode) startPolling();
+    if (document.visibilityState === 'visible' && shareCode) connectSSE();
 });
 
 // "Open in App" button - deep link only when user taps (no auto-redirect)
