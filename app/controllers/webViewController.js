@@ -754,6 +754,8 @@ async function loadGroup() {
         // Render the group view so the page always shows content (no auto redirect)
         renderGroup(data.data.group);
         hideLoading();
+        // Start polling so webview updates after Pay Now (not only after Next Round or manual refresh)
+        if (document.visibilityState === 'visible') startPolling();
     } catch (error) {
         console.error('Error loading group:', error);
         showError(error.message || 'Failed to load group. Please check the link and try again.');
@@ -958,15 +960,37 @@ function showError(message) {
 }
 
 
-// Refetch whenever the tab becomes visible so webview stays in sync with app (e.g. after completing group in app)
-document.addEventListener('visibilitychange', () => {
+// Poll interval (ms) - refetch so webview updates after Pay Now, not only after Next Round
+var refreshIntervalId = null;
+var POLL_INTERVAL_MS = 20000;
+
+function startPolling() {
+    if (!shareCode) return;
+    if (refreshIntervalId) return;
+    refreshIntervalId = setInterval(function() {
+        if (document.visibilityState === 'visible' && shareCode) loadGroup();
+    }, POLL_INTERVAL_MS);
+}
+function stopPolling() {
+    if (refreshIntervalId) {
+        clearInterval(refreshIntervalId);
+        refreshIntervalId = null;
+    }
+}
+
+// Refetch when tab becomes visible; start polling so Pay Now updates show without manual refresh
+document.addEventListener('visibilitychange', function() {
     if (document.visibilityState === 'visible' && shareCode) {
         loadGroup();
+        startPolling();
+    } else {
+        stopPolling();
     }
 });
 // Refetch when page is restored from back-forward cache (e.g. user pressed back)
-window.addEventListener('pageshow', (e) => {
+window.addEventListener('pageshow', function(e) {
     if (e.persisted && shareCode) loadGroup();
+    if (document.visibilityState === 'visible' && shareCode) startPolling();
 });
 
 // "Open in App" button - deep link only when user taps (no auto-redirect)
