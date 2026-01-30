@@ -966,20 +966,7 @@ exports.updatePaymentStatus = async (req, res, next) => {
       });
     }
 
-    // Respond immediately so the UI can close the loader quickly
-    res.status(200).json({
-      success: true,
-      data: {
-        participant: {
-          id: participant._id,
-          name: participant.name,
-          isPaid: !!isPaid,
-          paidAt: paidAtValue,
-        },
-      },
-    });
-
-    // Run payment log and notifications in background (do not block the response)
+    // Create payment log BEFORE responding so app/webview refetch sees it (no race)
     if (isPaid) {
       const gId = group._id;
       const pId = participant._id;
@@ -991,31 +978,32 @@ exports.updatePaymentStatus = async (req, res, next) => {
       const adminName = req.user.name || req.user.email || 'Admin';
       const isPayNow = source === 'pay_now';
 
-      setImmediate(async () => {
-        try {
-          let currentRound = await Round.findOne({ group: gId, status: 'IN_PROGRESS' }).lean();
-          if (!currentRound) {
-            currentRound = await Round.findOne({ group: gId }).sort({ roundNumber: -1 }).lean();
-          }
-          if (currentRound) {
-            const note = isPayNow
-              ? `${pName} was paid by Admin`
-              : `Admin collected the payment from ${pName}`;
-            const amount = isPayNow ? groupTotalAmount : amountPerPerson;
-            await PaymentLog.create({
-              group: gId,
-              round: currentRound._id,
-              participantId: pId,
-              amount,
-              paidBy: userId,
-              method: 'OTHER',
-              note: note || undefined,
-            });
-          }
-        } catch (logError) {
-          console.error('Error creating payment log entry:', logError);
+      try {
+        let currentRound = await Round.findOne({ group: gId, status: 'IN_PROGRESS' }).lean();
+        if (!currentRound) {
+          currentRound = await Round.findOne({ group: gId }).sort({ roundNumber: -1 }).lean();
         }
+        if (currentRound) {
+          const note = isPayNow
+            ? `${pName} was paid by Admin`
+            : `Admin collected the payment from ${pName}`;
+          const amount = isPayNow ? groupTotalAmount : amountPerPerson;
+          await PaymentLog.create({
+            group: gId,
+            round: currentRound._id,
+            participantId: pId,
+            amount,
+            paidBy: userId,
+            method: 'OTHER',
+            note: note || undefined,
+          });
+        }
+      } catch (logError) {
+        console.error('Error creating payment log entry:', logError);
+      }
 
+      // Notifications in background (do not block response)
+      setImmediate(async () => {
         try {
           const groupForNotify = await Group.findById(gId)
             .populate('participants.user', '_id')
@@ -1048,6 +1036,18 @@ exports.updatePaymentStatus = async (req, res, next) => {
         }
       });
     }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        participant: {
+          id: participant._id,
+          name: participant.name,
+          isPaid: !!isPaid,
+          paidAt: paidAtValue,
+        },
+      },
+    });
   } catch (err) {
     next(err);
   }
