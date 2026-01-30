@@ -303,24 +303,6 @@ body {
     letter-spacing: 1px;
 }
 
-.share-btn {
-    background-color: #61a5fb;
-    color: #FFFFFF;
-    border: none;
-    border-radius: 8px;
-    padding: 8px 14px;
-    font-size: 14px;
-    font-weight: 600;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    cursor: pointer;
-}
-
-.share-btn:hover {
-    opacity: 0.9;
-}
-
 .participants-list {
     display: flex;
     flex-direction: column;
@@ -597,22 +579,6 @@ body {
     opacity: 0.9;
 }
 
-.refresh-btn {
-    background: transparent;
-    color: #61a5fb;
-    border: 1px solid #61a5fb;
-    border-radius: 8px;
-    padding: 6px 12px;
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
-    margin-left: 12px;
-}
-
-.refresh-btn:hover {
-    opacity: 0.9;
-}
-
 @media (max-width: 600px) {
     body {
         padding: 20px;
@@ -647,7 +613,6 @@ body {
     <div id="group-content" class="group-content hidden">
         <div class="group-name-container">
             <div class="group-name" id="group-name"></div>
-            <button type="button" id="refresh-btn" class="refresh-btn" title="Refresh to see latest">Refresh</button>
         </div>
 
         <div class="savings-card">
@@ -677,10 +642,6 @@ body {
         <div class="payment-section">
             <div class="payment-header">
                 <div class="payment-title">PAYMENT STATUS</div>
-                <button type="button" id="share-btn" class="share-btn" title="Share">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z"/></svg>
-                    SHARE
-                </button>
             </div>
 
             <div class="participants-list" id="participants-list"></div>
@@ -887,33 +848,29 @@ function renderParticipants(participants, group, isGroupCompleted) {
         : participants;
     
     const currentRecipientIndex = group.currentRecipientIndex != null ? group.currentRecipientIndex : 0;
-    const allPaidOut = isGroupCompleted === true ||
-        (participants.length > 0 && participants.every(function(p) { return p.hasReceivedPayment === true; }));
     
     const list = document.getElementById('participants-list');
     list.innerHTML = sorted.map(function(p, index) {
         const isFirst = index === currentRecipientIndex && group.isOrderSet;
         const isPaid = p.isPaid === true;
-        const hasReceivedPayment = p.hasReceivedPayment === true || allPaidOut;
-        const paidClass = (isFirst || isPaid || allPaidOut) ? 'participant-card-paid' : '';
+        const hasReceivedPayment = p.hasReceivedPayment === true;
+        const paidClass = hasReceivedPayment ? 'participant-card-paid' : '';
         
-        // Serial number: always show when order is set or when completed (use order if 1-based, else index+1)
+        // Serial number: green only for participants who received payout (like app)
         const serialNum = (p.order !== null && p.order !== undefined) ? p.order : (index + 1);
-        const orderPaidClass = (isFirst || isPaid || allPaidOut) ? 'order-number-paid' : '';
+        const orderPaidClass = hasReceivedPayment ? 'order-number-paid' : '';
         const orderNumberHtml = '<div class="order-number ' + orderPaidClass + '"><div class="order-number-text">' + serialNum + '</div></div>';
         
-        // When completed: PAID OUT on the right. Otherwise: PAID/UNPAID or inline PAID OUT for current recipient
+        // PAID OUT badge only for participants who have received payment
         let rightHtml = '';
-        if (allPaidOut) {
+        if (hasReceivedPayment) {
             rightHtml = '<div class="paid-out-tag-right"><div class="paid-out-text-inline">PAID OUT</div></div>';
-        } else if (group.isOrderSet && !isFirst) {
+        } else if (group.isOrderSet) {
             if (isPaid) {
                 rightHtml = '<div class="payment-status-container"><div class="paid-status">PAID</div></div>';
             } else {
                 rightHtml = '<div class="payment-status-container"><div class="payment-status">UNPAID</div></div>';
             }
-        } else if (hasReceivedPayment && isFirst) {
-            rightHtml = '<div class="paid-out-tag-right"><div class="paid-out-text-inline">PAID OUT</div></div>';
         }
         
         return \`
@@ -1054,19 +1011,6 @@ window.addEventListener('pageshow', function(e) {
 document.addEventListener('click', (e) => {
     if (e.target && e.target.id === 'open-in-app-btn') {
         tryDeepLink();
-    }
-    if (e.target && e.target.id === 'refresh-btn') {
-        if (shareCode) loadGroup();
-    }
-    if (e.target && e.target.id === 'share-btn' || (e.target.closest && e.target.closest('#share-btn'))) {
-        var url = window.location.href;
-        if (navigator.share) {
-            navigator.share({ title: 'Ayuuto Group', url: url }).catch(function() {
-                navigator.clipboard.writeText(url);
-            });
-        } else {
-            navigator.clipboard.writeText(url);
-        }
     }
 });
 
