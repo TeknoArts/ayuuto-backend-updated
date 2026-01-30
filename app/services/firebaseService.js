@@ -13,7 +13,7 @@ function initializeFirebase() {
   try {
     let serviceAccount = null;
     
-    // Priority 1: Check for environment variable (for Railway/cloud deployments)
+    // Priority 1: Check for environment variable (for cloud deployments)
     if (process.env.FIREBASE_SERVICE_ACCOUNT) {
       try {
         // Parse JSON from environment variable

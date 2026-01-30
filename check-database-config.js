@@ -1,7 +1,7 @@
 /**
  * Check Database Configuration Script
  * 
- * This script shows which database each server (local vs Railway) is configured to use.
+ * This script shows which database each server (local vs production) is configured to use.
  */
 
 require('dotenv').config();
@@ -54,9 +54,9 @@ console.log(`   Database: ${localDbName}`);
 console.log(`   Host: ${localHost}`);
 console.log('');
 
-// Railway configuration (from environment)
-console.log('📊 Railway Server Configuration:');
-console.log(`   MONGODB_URI: Set in Railway Variables`);
+// Production configuration (from environment)
+console.log('📊 Production Server Configuration:');
+console.log(`   MONGODB_URI: Set in environment variables`);
 console.log(`   Expected: mongodb+srv://***:***@cluster0.z4bzsxf.mongodb.net/ayuuto`);
 console.log(`   Type: 🌐 MongoDB Atlas (Cloud)`);
 console.log(`   Database: ayuuto`);
@@ -70,13 +70,13 @@ console.log('');
 if (localMongoUri.includes('cluster0.z4bzsxf.mongodb.net') && localDbName === 'ayuuto') {
   console.log('✅ MATCH: Both servers are using the SAME database!');
   console.log('   - Local: Atlas cluster0.z4bzsxf.mongodb.net/ayuuto');
-  console.log('   - Railway: Atlas cluster0.z4bzsxf.mongodb.net/ayuuto');
+  console.log('   - Production: Atlas cluster0.z4bzsxf.mongodb.net/ayuuto');
   console.log('');
   console.log('✅ Both will have the same users and data');
 } else if (localMongoUri.includes('localhost') || localMongoUri.includes('127.0.0.1')) {
   console.log('❌ MISMATCH: Servers are using DIFFERENT databases!');
   console.log('   - Local: Local MongoDB (localhost:27017/ayuuto)');
-  console.log('   - Railway: Atlas cluster0.z4bzsxf.mongodb.net/ayuuto');
+  console.log('   - Production: Atlas cluster0.z4bzsxf.mongodb.net/ayuuto');
   console.log('');
   console.log('⚠️  This means:');
   console.log('   - Different users in each database');
@@ -89,12 +89,12 @@ if (localMongoUri.includes('cluster0.z4bzsxf.mongodb.net') && localDbName === 'a
 } else if (localDbName !== 'ayuuto') {
   console.log('❌ MISMATCH: Different database names!');
   console.log(`   - Local: ${localDbName}`);
-  console.log('   - Railway: ayuuto');
+  console.log('   - Production: ayuuto');
   console.log('');
   console.log('💡 Solution: Update .env MONGODB_URI to use "ayuuto" database');
 } else {
   console.log('⚠️  UNKNOWN: Cannot determine if databases match');
-  console.log('   Check Railway Dashboard → Variables → MONGODB_URI');
+  console.log('   Check MONGODB_URI in production environment');
   console.log('   And compare with local .env file');
 }
 

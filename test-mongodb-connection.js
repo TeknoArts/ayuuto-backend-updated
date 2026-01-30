@@ -15,7 +15,7 @@ console.log('🔍 Testing MongoDB Connection...\n');
 // Check if MONGODB_URI is set
 if (!process.env.MONGODB_URI) {
   console.error('❌ MONGODB_URI environment variable is not set!');
-  console.error('   Set MONGODB_URI in Railway Variables or .env file');
+  console.error('   Set MONGODB_URI in environment or .env file');
   process.exit(1);
 }
 
@@ -85,7 +85,7 @@ mongoose
       console.error('🌐 IP Whitelist Error!');
       console.error('   - Go to MongoDB Atlas → Network Access');
       console.error('   - Add IP: 0.0.0.0/0 (allows all IPs)');
-      console.error('   - Or add Railway\'s IP addresses');
+      console.error('   - Or add your server\'s IP addresses');
     } else if (err.message.includes('timeout') || err.message.includes('ENOTFOUND')) {
       console.error('⏱️  Connection Timeout!');
       console.error('   - Check MongoDB Atlas cluster is running');
@@ -94,15 +94,15 @@ mongoose
     } else if (err.message.includes('ECONNREFUSED')) {
       console.error('🚫 Connection Refused!');
       console.error('   - MONGODB_URI might be pointing to localhost');
-      console.error('   - On Railway, you must use MongoDB Atlas connection string');
+      console.error('   - In production, use MongoDB Atlas connection string');
       console.error('   - Format: mongodb+srv://username:password@cluster.mongodb.net/ayuuto');
     }
     
     console.error('\n💡 Troubleshooting:');
-    console.error('   1. Check Railway Dashboard → Variables → MONGODB_URI');
+    console.error('   1. Check MONGODB_URI environment variable');
     console.error('   2. Verify MongoDB Atlas → Network Access → IP Whitelist');
     console.error('   3. Test connection string in MongoDB Atlas');
-    console.error('   4. Check Railway logs for more details\n');
+    console.error('   4. Check server logs for more details\n');
     
     process.exit(1);
   });

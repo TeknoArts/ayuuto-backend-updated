@@ -5,19 +5,10 @@ exports.servePrivacyPolicy = (req, res) => {
   try {
     // Get the current host and protocol for proper URL generation
     const protocol = req.get('X-Forwarded-Proto') || req.protocol || 'https';
-    const host = req.get('host') || req.get('X-Forwarded-Host') || 'web-production-40b9d.up.railway.app';
+    const host = req.get('host') || req.get('X-Forwarded-Host') || '104.248.117.205';
     
-    // Use BACKEND_URL if available (more reliable for production)
-    let baseUrl;
-    if (process.env.BACKEND_URL) {
-      baseUrl = process.env.BACKEND_URL;
-    } else if (process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_SERVICE_NAME) {
-      // On Railway, always use HTTPS
-      baseUrl = `https://${host}`;
-    } else {
-      // Development fallback
-      baseUrl = `${protocol}://${host}`;
-    }
+    // Use BACKEND_URL if available, else derive from request
+    const baseUrl = process.env.BACKEND_URL || `${protocol}://${host}`;
 
     // Generate HTML with inline CSS - matches app design
     const html = `<!DOCTYPE html>
@@ -218,7 +209,7 @@ body {
         <div class="section">
             <h2 class="section-title">4. Data Storage and Hosting</h2>
             <p class="section-text">
-                All data is securely stored on servers hosted by Railway.
+                All data is securely stored on cloud servers (DigitalOcean).
             </p>
             <p class="section-text">
                 We take reasonable technical and organizational measures to protect your information from unauthorized access, loss, or misuse.
@@ -231,7 +222,7 @@ body {
                 Ayuuto App does not share your personal data with third parties.
             </p>
             <p class="section-text">
-                No external tools or services process user data beyond our hosting provider (Railway).
+                No external tools or services process user data beyond our cloud hosting provider.
             </p>
         </div>
 

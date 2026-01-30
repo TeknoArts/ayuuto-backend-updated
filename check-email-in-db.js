@@ -17,7 +17,7 @@ console.log(`📧 Email to check: ${EMAIL_TO_CHECK}\n`);
 // Check if MONGODB_URI is set
 if (!process.env.MONGODB_URI) {
   console.error('❌ MONGODB_URI environment variable is not set!');
-  console.error('   Set MONGODB_URI in Railway Variables or .env file');
+  console.error('   Set MONGODB_URI in environment or .env file');
   process.exit(1);
 }
 

@@ -32,7 +32,7 @@ optionalVars.forEach(varName => {
 
 if (missingRequired.length > 0) {
   console.log(`\n❌ Missing required environment variables: ${missingRequired.join(', ')}`);
-  console.log('   Set these in Railway Dashboard → Variables');
+  console.log('   Set these in your environment variables');
   process.exit(1);
 }
 
@@ -105,4 +105,4 @@ try {
 }
 
 console.log('\n✅ All checks passed! Server should start successfully.');
-console.log('\n💡 If server still crashes, check Railway logs for runtime errors.');
+console.log('\n💡 If server still crashes, check server logs for runtime errors.');

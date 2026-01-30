@@ -16,7 +16,7 @@ console.log('🔍 Counting Users in Database...\n');
 // Check if MONGODB_URI is set
 if (!process.env.MONGODB_URI) {
   console.error('❌ MONGODB_URI environment variable is not set!');
-  console.error('   Set MONGODB_URI in Railway Variables or .env file');
+  console.error('   Set MONGODB_URI in environment or .env file');
   process.exit(1);
 }
 
@@ -91,7 +91,7 @@ mongoose
     console.error('❌ MongoDB Connection: FAILED\n');
     console.error(`   Error: ${err.message}`);
     console.error('\n💡 Troubleshooting:');
-    console.error('   1. Check Railway Dashboard → Variables → MONGODB_URI');
+    console.error('   1. Check MONGODB_URI environment variable');
     console.error('   2. Verify MongoDB Atlas → Network Access → IP Whitelist');
     console.error('   3. Test connection string in MongoDB Atlas');
     process.exit(1);

@@ -10,7 +10,7 @@ dotenv.config();
 
 const app = express();
 
-// Trust proxy (important for Railway/cloud platforms to get correct protocol)
+// Trust proxy (important for cloud platforms to get correct protocol)
 app.set('trust proxy', true);
 
 // Middleware
@@ -31,8 +31,8 @@ if (process.env.MONGODB_URI) {
   console.log('🔌 Attempting to connect to MongoDB...');
   console.log(`   URI: ${maskedUri}`);
 } else {
-  console.warn('⚠️  MONGODB_URI not set! Using default localhost (will fail on Railway)');
-  console.warn('   Please set MONGODB_URI environment variable in Railway');
+  console.warn('⚠️  MONGODB_URI not set! Using default localhost (will fail in production)');
+  console.warn('   Please set MONGODB_URI environment variable');
 }
 
 mongoose
@@ -66,7 +66,7 @@ mongoose
       console.error('\n🌐 IP Whitelist Error!');
       console.error('   - Go to MongoDB Atlas → Network Access');
       console.error('   - Add IP: 0.0.0.0/0 (allows all IPs)');
-      console.error('   - Or add Railway\'s IP addresses');
+      console.error('   - Or add your server\'s IP addresses');
     } else if (err.message.includes('timeout') || err.message.includes('ENOTFOUND')) {
       console.error('\n⏱️  Connection Timeout!');
       console.error('   - Check MongoDB Atlas cluster is running');
@@ -74,15 +74,15 @@ mongoose
       console.error('   - Check network connectivity');
     } else if (!process.env.MONGODB_URI) {
       console.error('\n⚠️  MONGODB_URI Not Set!');
-      console.error('   - Set MONGODB_URI environment variable in Railway');
+      console.error('   - Set MONGODB_URI environment variable');
       console.error('   - Format: mongodb+srv://username:password@cluster.mongodb.net/ayuuto');
     }
     
     console.error('\n💡 Troubleshooting:');
-    console.error('   1. Check Railway Dashboard → Variables → MONGODB_URI');
+    console.error('   1. Check MONGODB_URI environment variable');
     console.error('   2. Verify MongoDB Atlas → Network Access → IP Whitelist');
     console.error('   3. Test connection string in MongoDB Atlas');
-    console.error('   4. Check Railway logs for more details\n');
+    console.error('   4. Check server logs for more details\n');
     
     process.exit(1);
   });

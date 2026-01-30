@@ -1,13 +1,13 @@
 /**
- * Extract Email Configuration for Railway
+ * Extract Email Configuration for Deployment
  * 
  * This script reads your .env file and shows what email variables
- * you need to add to Railway.
+ * you need to add to your production environment.
  */
 
 require('dotenv').config();
 
-console.log('📧 Email Configuration for Railway');
+console.log('📧 Email Configuration for Deployment');
 console.log('='.repeat(60));
 console.log('');
 
@@ -64,8 +64,8 @@ if (process.env.MAILTRAP_USER) {
   console.log('');
 }
 
-// Generate Railway Variables
-console.log('📋 Variables to Add to Railway:');
+// Generate deployment variables
+console.log('📋 Variables to Add to Production:');
 console.log('='.repeat(60));
 console.log('');
 
@@ -114,8 +114,8 @@ if (process.env.SENDGRID_API_KEY && !process.env.SENDGRID_API_KEY.includes('your
 }
 
 console.log('📝 Instructions:');
-console.log('   1. Go to Railway Dashboard → Your Service → Variables');
-console.log('   2. Click "+ New Variable" for each variable above');
+console.log('   1. Go to your hosting dashboard (e.g. DigitalOcean) → Environment Variables');
+console.log('   2. Add each variable above');
 console.log('   3. Copy the Key and Value from above');
-console.log('   4. Railway will auto-redeploy');
+console.log('   4. Redeploy your application');
 console.log('');
