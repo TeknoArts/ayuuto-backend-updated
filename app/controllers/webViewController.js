@@ -18,16 +18,16 @@ exports.serveGroupView = (req, res) => {
     
     console.log(`[WebView] Serving group view for shareCode: ${shareCode}`);
 
-    // Use BACKEND_URL in production (e.g. DigitalOcean: http://YOUR_IP or https://your-domain.com)
+    // WebView must use DigitalOcean URL - do NOT use BACKEND_URL if it points to Railway
+    const DIGITALOCEAN_URL = 'http://104.248.117.205';
     const protocol = req.get('X-Forwarded-Proto') || req.protocol || 'https';
     const host = req.get('host') || req.get('X-Forwarded-Host') || 'localhost';
     
-    let apiBaseUrl;
-    if (process.env.BACKEND_URL) {
-      apiBaseUrl = `${process.env.BACKEND_URL.replace(/\/$/, '')}/api/public`;
-    } else {
-      apiBaseUrl = `${protocol}://${host}/api/public`;
+    let baseUrl = process.env.WEB_VIEW_BASE_URL || process.env.BACKEND_URL;
+    if (!baseUrl || baseUrl.includes('railway')) {
+      baseUrl = DIGITALOCEAN_URL;
     }
+    const apiBaseUrl = `${String(baseUrl).replace(/\/$/, '')}/api/public`;
     
     console.log(`[WebView] API Base URL: ${apiBaseUrl}`);
 
