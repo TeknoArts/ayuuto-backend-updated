@@ -497,13 +497,14 @@ exports.sendGroupInvitationEmail = async (participantEmail, participantName, gro
   const subject = `You've been added to ${groupName} on Ayuuto`;
   
   // Generate view group URL using shareCode
-  // IMPORTANT: In production, BACKEND_URL must be set (e.g., https://your-app.railway.app)
-  // Never use localhost in emails - emails are opened on different devices!
+  // View Group button in emails must point to the public web view (DigitalOcean).
+  // Priority: VIEW_GROUP_BASE_URL > BACKEND_URL > FRONTEND_URL > DigitalOcean default
+  const DIGITALOCEAN_VIEW_URL = 'http://104.248.117.205';
+  const viewGroupBaseUrl = process.env.VIEW_GROUP_BASE_URL || process.env.BACKEND_URL || process.env.FRONTEND_URL || DIGITALOCEAN_VIEW_URL;
   
   const localPort = process.env.PORT || 5001;
   
-  // Get base URL - prioritize BACKEND_URL for production
-  // Priority: BACKEND_URL > FRONTEND_URL > Auto-detect from platform > Railway default
+  // Legacy baseUrl for fallbacks - prioritize BACKEND_URL for production
   let baseUrl = process.env.BACKEND_URL || process.env.FRONTEND_URL;
   
   // Auto-detect Railway URL (check multiple ways Railway exposes it)
@@ -575,40 +576,38 @@ exports.sendGroupInvitationEmail = async (participantEmail, participantName, gro
     }
   }
   
-  // Generate view group URL - uses shareCode, tries to deep link to app, falls back to public view
+  // Generate view group URL - always use DigitalOcean URL for View Group button
   let viewGroupUrl;
+  const urlBase = viewGroupBaseUrl.replace(/\/$/, '');
   if (shareCode) {
-    // Link to view page that will try to open app, or show public view
-    viewGroupUrl = `${baseUrl}/view/${shareCode}`;
+    viewGroupUrl = `${urlBase}/view/${shareCode}`;
   } else if (groupId) {
-    // Fallback if no shareCode
-    viewGroupUrl = `${baseUrl}/view-group/${groupId}`;
+    viewGroupUrl = `${urlBase}/view-group/${groupId}`;
   } else {
-    // Last resort
-    viewGroupUrl = `${baseUrl}`;
+    viewGroupUrl = urlBase;
   }
   
   // Log for debugging
   console.log(`[Email] Sending group notification email to: ${participantEmail}`);
   console.log(`[Email] Group ID: ${groupId}, ShareCode: ${shareCode ? 'provided' : 'missing'}`);
   console.log(`[Email] Generated view group URL: ${viewGroupUrl}`);
-  console.log(`[Email] Base URL used: ${baseUrl}`);
+  console.log(`[Email] View group base URL used: ${viewGroupBaseUrl}`);
   
   // Ensure URL is valid (not '#' and doesn't contain localhost)
   if (!viewGroupUrl || viewGroupUrl === '#' || viewGroupUrl.includes('localhost') || viewGroupUrl.includes('127.0.0.1')) {
     console.error(`[Email] ❌ ERROR: Invalid view group URL generated: ${viewGroupUrl}`);
-    viewGroupUrl = shareCode ? `${baseUrl}/view/${shareCode}` : `${baseUrl}`;
+    viewGroupUrl = shareCode ? `${urlBase}/view/${shareCode}` : urlBase;
     console.log(`[Email] Using fallback URL: ${viewGroupUrl}`);
   }
   
   // Final validation - ensure URL is a valid HTTP/HTTPS URL
   if (!viewGroupUrl.startsWith('http://') && !viewGroupUrl.startsWith('https://')) {
     console.error(`[Email] ❌ ERROR: URL doesn't start with http:// or https://: ${viewGroupUrl}`);
-    viewGroupUrl = shareCode ? `${baseUrl}/view/${shareCode}` : `${baseUrl}`;
+    viewGroupUrl = shareCode ? `${urlBase}/view/${shareCode}` : urlBase;
   }
   
   // Log final URL for debugging
-  console.log(`[Email] ✅ Final view group URL: ${viewGroupUrl}`);
+  console.log(`[Email] ✅ Final view group URL (DigitalOcean): ${viewGroupUrl}`);
   
   const html = `
     <!DOCTYPE html>
