@@ -283,6 +283,7 @@ body {
     letter-spacing: 0.5px;
 }
 
+
 .payment-section {
     margin-top: 8px;
 }
@@ -298,8 +299,26 @@ body {
 .payment-title {
     font-size: 18px;
     font-weight: bold;
-    color: #bc9426;
+    color: #FFD700;
     letter-spacing: 1px;
+}
+
+.share-btn {
+    background-color: #61a5fb;
+    color: #FFFFFF;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 14px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+}
+
+.share-btn:hover {
+    opacity: 0.9;
 }
 
 .participants-list {
@@ -316,7 +335,7 @@ body {
 }
 
 .participant-card-paid {
-    border-color: #4CAF50;
+    border-color: #90EE90;
 }
 
 .participant-top-row {
@@ -336,9 +355,10 @@ body {
 }
 
 .order-number {
-    width: 24px;
-    height: 24px;
-    border-radius: 6px;
+    width: 28px;
+    height: 28px;
+    min-width: 28px;
+    border-radius: 14px;
     background-color: #9BA1A6;
     display: flex;
     align-items: center;
@@ -346,7 +366,7 @@ body {
 }
 
 .order-number-paid {
-    background-color: #4CAF50;
+    background-color: #90EE90;
 }
 
 .order-number-text {
@@ -364,10 +384,16 @@ body {
 }
 
 .paid-out-tag-inline {
-    background-color: #4CAF50;
+    background-color: #90EE90;
     border-radius: 6px;
-    padding: 4px 8px;
+    padding: 6px 12px;
     margin-left: 8px;
+}
+
+.paid-out-tag-right {
+    background-color: #90EE90;
+    border-radius: 6px;
+    padding: 6px 12px;
 }
 
 .paid-out-text-inline {
@@ -431,7 +457,7 @@ body {
 .logs-title {
     font-size: 16px;
     font-weight: bold;
-    color: #bc9426;
+    color: #FFD700;
     letter-spacing: 1px;
 }
 
@@ -521,12 +547,21 @@ body {
     color: #FFD700;
 }
 
-.completion-title {
-    font-size: 32px;
+.completion-title-ayuuto {
+    font-size: 24px;
+    font-weight: bold;
+    color: #FFFFFF;
+    letter-spacing: 2px;
+    margin-top: 16px;
+    text-align: center;
+}
+
+.completion-title-completed {
+    font-size: 28px;
     font-weight: bold;
     color: #4CAF50;
     letter-spacing: 2px;
-    margin-top: 16px;
+    margin-top: 4px;
     margin-bottom: 12px;
     text-align: center;
 }
@@ -642,6 +677,10 @@ body {
         <div class="payment-section">
             <div class="payment-header">
                 <div class="payment-title">PAYMENT STATUS</div>
+                <button type="button" id="share-btn" class="share-btn" title="Share">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z"/></svg>
+                    SHARE
+                </button>
             </div>
 
             <div class="participants-list" id="participants-list"></div>
@@ -656,10 +695,11 @@ body {
 
         <div id="completion-card" class="completion-card hidden">
             <svg class="completion-icon" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+                <path d="M19 5h-2V3H7v2H5c-1.1 0-2 .9-2 2v1c0 2.55 1.92 4.63 4.39 4.94.63 1.5 1.98 2.63 3.61 2.96V19H7v2h10v-2h-4v-3.1c1.63-.33 2.98-1.46 3.61-2.96C19.08 12.63 21 10.55 21 8V7c0-1.1-.9-2-2-2zM5 8V7h2v3.82C5.84 10.4 5 9.3 5 8zm14 0c0 1.3-.84 2.4-2 2.82V7h2v1z"/>
             </svg>
-            <div class="completion-title">AYUUTO COMPLETED</div>
-            <div class="completion-message">All members have been paid out</div>
+            <div class="completion-title-ayuuto">AYUUTO</div>
+            <div class="completion-title-completed">COMPLETED</div>
+            <div class="completion-message">ALL MEMBERS HAVE BEEN PAID OUT SAFELY</div>
         </div>
 
         <div id="open-in-app-container" class="open-in-app-container hidden">
@@ -804,7 +844,7 @@ function renderGroup(group) {
     
     // Collection day
     const collectionDay = group.collectionDate || 2;
-    document.getElementById('collection-day').textContent = 'COLLECTION DAY ' + collectionDay;
+    document.getElementById('collection-day').textContent = 'COLLECTION DAY: ' + collectionDay;
     
     // Participants (pass isCompleted so PAID OUT shows even when share settings hide hasReceivedPayment)
     if (group.participants && group.participants.length > 0) {
@@ -843,11 +883,10 @@ function renderGroup(group) {
 
 function renderParticipants(participants, group, isGroupCompleted) {
     const sorted = group.isOrderSet 
-        ? participants.slice().sort(function(a, b) { return (a.order || 0) - (b.order || 0); })
+        ? participants.slice().sort(function(a, b) { return (a.order != null ? a.order : 999) - (b.order != null ? b.order : 999); })
         : participants;
     
-    const currentRecipientIndex = group.currentRecipientIndex || 0;
-    // Use passed isGroupCompleted so completion shows even when share settings hide hasReceivedPayment
+    const currentRecipientIndex = group.currentRecipientIndex != null ? group.currentRecipientIndex : 0;
     const allPaidOut = isGroupCompleted === true ||
         (participants.length > 0 && participants.every(function(p) { return p.hasReceivedPayment === true; }));
     
@@ -858,25 +897,23 @@ function renderParticipants(participants, group, isGroupCompleted) {
         const hasReceivedPayment = p.hasReceivedPayment === true || allPaidOut;
         const paidClass = (isFirst || isPaid || allPaidOut) ? 'participant-card-paid' : '';
         
-        let orderNumberHtml = '';
-        if (group.isOrderSet && p.order !== null && p.order !== undefined) {
-            const orderPaidClass = (isFirst || isPaid || allPaidOut) ? 'order-number-paid' : '';
-            orderNumberHtml = '<div class="order-number ' + orderPaidClass + '"><div class="order-number-text">' + (p.order + 1) + '</div></div>';
-        }
+        // Serial number: always show when order is set or when completed (use order if 1-based, else index+1)
+        const serialNum = (p.order !== null && p.order !== undefined) ? p.order : (index + 1);
+        const orderPaidClass = (isFirst || isPaid || allPaidOut) ? 'order-number-paid' : '';
+        const orderNumberHtml = '<div class="order-number ' + orderPaidClass + '"><div class="order-number-text">' + serialNum + '</div></div>';
         
-        // Show PAID OUT when participant received payout or when group is completed (API may hide hasReceivedPayment)
-        let paidOutTag = '';
-        if (hasReceivedPayment) {
-            paidOutTag = '<div class="paid-out-tag-inline"><div class="paid-out-text-inline">PAID OUT</div></div>';
-        }
-        
-        let statusHtml = '';
-        if (group.isOrderSet && !isFirst) {
+        // When completed: PAID OUT on the right. Otherwise: PAID/UNPAID or inline PAID OUT for current recipient
+        let rightHtml = '';
+        if (allPaidOut) {
+            rightHtml = '<div class="paid-out-tag-right"><div class="paid-out-text-inline">PAID OUT</div></div>';
+        } else if (group.isOrderSet && !isFirst) {
             if (isPaid) {
-                statusHtml = '<div class="payment-status-container"><div class="paid-status">PAID</div></div>';
+                rightHtml = '<div class="payment-status-container"><div class="paid-status">PAID</div></div>';
             } else {
-                statusHtml = '<div class="payment-status-container"><div class="payment-status">UNPAID</div></div>';
+                rightHtml = '<div class="payment-status-container"><div class="payment-status">UNPAID</div></div>';
             }
+        } else if (hasReceivedPayment && isFirst) {
+            rightHtml = '<div class="paid-out-tag-right"><div class="paid-out-text-inline">PAID OUT</div></div>';
         }
         
         return \`
@@ -885,9 +922,8 @@ function renderParticipants(participants, group, isGroupCompleted) {
                     <div class="participant-left">
                         \${orderNumberHtml}
                         <div class="participant-name">\${escapeHtml(formatParticipantName(p.name))}</div>
-                        \${paidOutTag}
                     </div>
-                    \${statusHtml}
+                    \${rightHtml}
                 </div>
             </div>
         \`;
@@ -1015,13 +1051,22 @@ window.addEventListener('pageshow', function(e) {
     if (document.visibilityState === 'visible' && shareCode) startRealtime();
 });
 
-// "Open in App" button - deep link only when user taps (no auto-redirect)
 document.addEventListener('click', (e) => {
     if (e.target && e.target.id === 'open-in-app-btn') {
         tryDeepLink();
     }
     if (e.target && e.target.id === 'refresh-btn') {
         if (shareCode) loadGroup();
+    }
+    if (e.target && e.target.id === 'share-btn' || (e.target.closest && e.target.closest('#share-btn'))) {
+        var url = window.location.href;
+        if (navigator.share) {
+            navigator.share({ title: 'Ayuuto Group', url: url }).catch(function() {
+                navigator.clipboard.writeText(url);
+            });
+        } else {
+            navigator.clipboard.writeText(url);
+        }
     }
 });
 
