@@ -772,8 +772,14 @@ function formatParticipantName(name) {
 }
 
 function renderGroup(group) {
+    if (!group) return;
+    // Single source of truth for completion (API sends isCompleted/status; participants may have hasReceivedPayment hidden by share settings)
+    const isCompleted = group.isCompleted === true ||
+        (group.status && String(group.status) === 'COMPLETED') ||
+        (group.participants && group.participants.length > 0 && group.participants.every(function(p) { return p.hasReceivedPayment === true; }));
+    
     // Group name
-    document.getElementById('group-name').textContent = group.name.toUpperCase();
+    document.getElementById('group-name').textContent = (group.name || '').toUpperCase();
     
     // Calculate total savings
     const totalSavings = group.amountPerPerson && group.memberCount 
@@ -781,11 +787,9 @@ function renderGroup(group) {
         : 0;
     document.getElementById('amount-text').textContent = totalSavings.toString();
     
-    // Badge (completed only) - group is completed when ALL have received payout (hasReceivedPayment), not when all have paid (isPaid)
+    // Badge (completed only)
     const badgeContainer = document.getElementById('badge-container');
-    const allPaidOut = group.isCompleted === true || group.status === 'COMPLETED' ||
-        (group.participants && group.participants.every(p => p.hasReceivedPayment === true));
-    if (allPaidOut) {
+    if (isCompleted) {
         badgeContainer.innerHTML = '<div class="completed-badge"><div class="completed-text">COMPLETED</div></div>';
     } else {
         badgeContainer.innerHTML = '';
@@ -793,8 +797,8 @@ function renderGroup(group) {
     
     // Next recipient
     const nextRecipientEl = document.getElementById('next-recipient-value');
-    if (allPaidOut) {
-        const progressBars = group.participants ? group.participants.map(() => '<div class="progress-bar-segment"></div>').join('') : '';
+    if (isCompleted) {
+        const progressBars = group.participants ? group.participants.map(function() { return '<div class="progress-bar-segment"></div>'; }).join('') : '';
         nextRecipientEl.innerHTML = '<div class="progress-indicator">' + progressBars + '</div>';
     } else if (group.rounds && group.rounds.length > 0 && group.rounds[0].recipient) {
         const recipientName = formatParticipantName(group.rounds[0].recipient.name);
@@ -807,9 +811,9 @@ function renderGroup(group) {
     const collectionDay = group.collectionDate || 2;
     document.getElementById('collection-day').textContent = 'COLLECTION DAY ' + collectionDay;
     
-    // Participants
+    // Participants (pass isCompleted so PAID OUT shows even when share settings hide hasReceivedPayment)
     if (group.participants && group.participants.length > 0) {
-        renderParticipants(group.participants, group);
+        renderParticipants(group.participants, group, isCompleted);
     }
     
     // Activity logs
@@ -819,9 +823,12 @@ function renderGroup(group) {
         document.getElementById('logs-container').innerHTML = '<div class="logs-empty-state"><div class="logs-empty-text">No activity yet</div></div>';
     }
     
-    // Completion card
-    if (allPaidOut) {
-        document.getElementById('completion-card').classList.remove('hidden');
+    // Completion card - show "AYUUTO COMPLETED" when group is completed; hide when not
+    const completionCard = document.getElementById('completion-card');
+    if (isCompleted) {
+        completionCard.classList.remove('hidden');
+    } else {
+        completionCard.classList.add('hidden');
     }
     
     // Show "Open in App" only on mobile when we have groupId
@@ -839,30 +846,30 @@ function renderGroup(group) {
     document.getElementById('group-content').classList.remove('hidden');
 }
 
-function renderParticipants(participants, group) {
+function renderParticipants(participants, group, isGroupCompleted) {
     const sorted = group.isOrderSet 
-        ? [...participants].sort((a, b) => (a.order || 0) - (b.order || 0))
+        ? participants.slice().sort(function(a, b) { return (a.order || 0) - (b.order || 0); })
         : participants;
     
     const currentRecipientIndex = group.currentRecipientIndex || 0;
-    const groupCompleted = group.isCompleted === true || group.status === 'COMPLETED';
-    const allPaidOut = groupCompleted ||
-        (participants.length > 0 && participants.every(p => p.hasReceivedPayment === true));
+    // Use passed isGroupCompleted so completion shows even when share settings hide hasReceivedPayment
+    const allPaidOut = isGroupCompleted === true ||
+        (participants.length > 0 && participants.every(function(p) { return p.hasReceivedPayment === true; }));
     
     const list = document.getElementById('participants-list');
-    list.innerHTML = sorted.map((p, index) => {
+    list.innerHTML = sorted.map(function(p, index) {
         const isFirst = index === currentRecipientIndex && group.isOrderSet;
         const isPaid = p.isPaid === true;
-        const hasReceivedPayment = p.hasReceivedPayment === true;
+        const hasReceivedPayment = p.hasReceivedPayment === true || allPaidOut;
         const paidClass = (isFirst || isPaid || allPaidOut) ? 'participant-card-paid' : '';
         
         let orderNumberHtml = '';
         if (group.isOrderSet && p.order !== null && p.order !== undefined) {
             const orderPaidClass = (isFirst || isPaid || allPaidOut) ? 'order-number-paid' : '';
-            orderNumberHtml = \`<div class="order-number \${orderPaidClass}"><div class="order-number-text">\${p.order + 1}</div></div>\`;
+            orderNumberHtml = '<div class="order-number ' + orderPaidClass + '"><div class="order-number-text">' + (p.order + 1) + '</div></div>';
         }
         
-        // Show PAID OUT only for participants who have received their payout (hasReceivedPayment)
+        // Show PAID OUT when participant received payout or when group is completed (API may hide hasReceivedPayment)
         let paidOutTag = '';
         if (hasReceivedPayment) {
             paidOutTag = '<div class="paid-out-tag-inline"><div class="paid-out-text-inline">PAID OUT</div></div>';

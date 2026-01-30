@@ -36,7 +36,9 @@ exports.viewGroupByShareCode = async (req, res, next) => {
     }
 
     // Find group by shareCode - use lean() for fresh read from DB
+    // .read('primary') ensures we get latest data (avoids stale read when webview refreshes after app completes group)
     const group = await Group.findOne({ shareCode })
+      .read('primary')
       .populate('createdBy', 'name email')
       .populate('participants.user', 'name email')
       .lean();
