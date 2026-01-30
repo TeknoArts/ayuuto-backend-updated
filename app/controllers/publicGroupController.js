@@ -1,6 +1,7 @@
 const Group = require('../models/Group');
 const Round = require('../models/Round');
 const PaymentLog = require('../models/PaymentLog');
+const GroupActivityLog = require('../models/GroupActivityLog');
 const { extractShareCode } = require('../utils/shareToken');
 
 // @desc    View group by share code (Public) - No token in URL
@@ -69,11 +70,18 @@ exports.viewGroupByShareCode = async (req, res, next) => {
     const rounds = await Round.find({ group: group._id })
       .sort({ roundNumber: -1 });
 
-    // Get payment logs (only populate paidBy - participantId is not a reference)
-    const paymentLogs = await PaymentLog.find({ group: group._id })
-      .populate('paidBy', 'name')
-      .sort({ createdAt: -1 })
-      .limit(50); // Limit for performance
+    // Get payment logs and group activity logs (group_created, spin), merge for activity timeline
+    const [paymentLogs, groupActivityLogs] = await Promise.all([
+      PaymentLog.find({ group: group._id })
+        .populate('paidBy', 'name')
+        .sort({ createdAt: -1 })
+        .limit(50)
+        .lean(),
+      GroupActivityLog.find({ group: group._id })
+        .sort({ createdAt: -1 })
+        .limit(50)
+        .lean(),
+    ]);
 
     // Build response based on share settings
     const shareSettings = group.shareSettings || {};
@@ -138,21 +146,32 @@ exports.viewGroupByShareCode = async (req, res, next) => {
             : [],
           rounds: roundsWithRecipient,
           activityLog: shareSettings.showActivityLog
-            ? paymentLogs.map(log => {
-                // Get participant name from participantId
-                const participantName = log.participantId 
-                  ? participantNameById.get(log.participantId.toString()) || null
-                  : null;
-                
-                return {
-                  type: 'payment',
-                  description: log.note || `Payment of ${log.amount || 0}`,
-                  amount: shareSettings.showAmounts ? log.amount : undefined,
-                  paidBy: log.paidBy ? { name: log.paidBy.name } : null,
-                  paidTo: participantName ? { name: participantName } : null,
-                  createdAt: log.createdAt || log.paidAt,
-                };
-              })
+            ? (() => {
+                const paymentEntries = paymentLogs.map(log => {
+                  const participantName = log.participantId
+                    ? participantNameById.get(log.participantId.toString()) || null
+                    : null;
+                  return {
+                    type: 'payment',
+                    description: log.note || `Payment of ${log.amount || 0}`,
+                    amount: shareSettings.showAmounts ? log.amount : undefined,
+                    paidBy: log.paidBy ? { name: log.paidBy.name } : null,
+                    paidTo: participantName ? { name: participantName } : null,
+                    createdAt: log.createdAt || log.paidAt,
+                  };
+                });
+                const activityEntries = groupActivityLogs.map(log => ({
+                  type: log.type,
+                  description: log.type === 'group_created'
+                    ? 'Admin created group'
+                    : log.type === 'spin'
+                      ? 'Spin for order was clicked'
+                      : '',
+                  createdAt: log.createdAt,
+                }));
+                return [...paymentEntries, ...activityEntries]
+                  .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+              })()
             : [],
         },
       },

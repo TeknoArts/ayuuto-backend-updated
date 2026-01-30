@@ -1,6 +1,7 @@
 const Group = require('../models/Group');
 const Round = require('../models/Round');
 const PaymentLog = require('../models/PaymentLog');
+const GroupActivityLog = require('../models/GroupActivityLog');
 const User = require('../models/User');
 const notificationService = require('../services/notificationService');
 const { sendGroupInvitationEmail } = require('../services/emailService');
@@ -25,6 +26,12 @@ exports.createGroup = async (req, res, next) => {
       memberCount,
       createdBy: userId,
       participants: [],
+    });
+
+    await GroupActivityLog.create({
+      group: group._id,
+      type: 'group_created',
+      createdBy: userId,
     });
 
     res.status(201).json({
@@ -849,6 +856,12 @@ exports.spinForOrder = async (req, res, next) => {
 
     const currentRound = roundDocs.find((r) => r.roundNumber === 1) || null;
 
+    await GroupActivityLog.create({
+      group: group._id,
+      type: 'spin',
+      createdBy: req.user.id,
+    });
+
     // Map participants to include id
     const participantsWithId = sortedParticipants.map((p) => ({
       id: p._id.toString(),
@@ -983,6 +996,9 @@ exports.updatePaymentStatus = async (req, res, next) => {
             currentRound = await Round.findOne({ group: gId }).sort({ roundNumber: -1 }).lean();
           }
           if (currentRound) {
+            const note = isPayNow
+              ? undefined
+              : `Admin collected the payment from ${pName}`;
             await PaymentLog.create({
               group: gId,
               round: currentRound._id,
@@ -990,6 +1006,7 @@ exports.updatePaymentStatus = async (req, res, next) => {
               amount,
               paidBy: userId,
               method: 'OTHER',
+              note: note || undefined,
             });
           }
         } catch (logError) {
@@ -1081,26 +1098,29 @@ exports.getGroupLogs = async (req, res, next) => {
       });
     }
 
-    // Load payment logs for group, newest first
-    const logs = await PaymentLog.find({ group: groupId })
-      .populate('round', 'roundNumber')
-      .populate('paidBy', 'name email')
-      .sort({ paidAt: -1, createdAt: -1 });
+    // Load payment logs and group activity logs (group_created, spin), merge and sort by createdAt desc
+    const [paymentLogs, activityLogs] = await Promise.all([
+      PaymentLog.find({ group: groupId })
+        .populate('round', 'roundNumber')
+        .populate('paidBy', 'name email')
+        .sort({ paidAt: -1, createdAt: -1 })
+        .lean(),
+      GroupActivityLog.find({ group: groupId })
+        .sort({ createdAt: -1 })
+        .lean(),
+    ]);
 
     // Map participant ids to display names
-    // If participant has a user account, use their name
-    // If participant doesn't have an account, use their email
     const participantDisplayNameById = new Map();
     group.participants.forEach((p) => {
       let displayName = p.name;
-      // If participant doesn't have a user account (email-only participant), use email
       if (!p.user && p.email) {
         displayName = p.email;
       }
       participantDisplayNameById.set(p._id.toString(), displayName);
     });
 
-    const mappedLogs = logs.map((log) => ({
+    const paymentMapped = paymentLogs.map((log) => ({
       id: log._id.toString(),
       type: 'payment',
       groupId: group._id.toString(),
@@ -1120,7 +1140,24 @@ exports.getGroupLogs = async (req, res, next) => {
         : null,
       paidAt: log.paidAt,
       createdAt: log.createdAt,
+      description: log.note || undefined,
     }));
+
+    const activityMapped = activityLogs.map((log) => ({
+      id: log._id.toString(),
+      type: log.type,
+      groupId: group._id.toString(),
+      description: log.type === 'group_created'
+        ? 'Admin created group'
+        : log.type === 'spin'
+          ? 'Spin for order was clicked'
+          : '',
+      createdAt: log.createdAt,
+    }));
+
+    const mappedLogs = [...paymentMapped, ...activityMapped].sort(
+      (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+    );
 
     // Disable caching for group logs - data changes frequently
     res.set({

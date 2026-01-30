@@ -175,18 +175,6 @@ body {
     letter-spacing: 1px;
 }
 
-.admin-badge {
-    background-color: #002452;
-    padding: 6px 12px;
-    border-radius: 12px;
-}
-
-.admin-text {
-    color: #FFFFFF;
-    font-size: 12px;
-    font-weight: bold;
-}
-
 .completed-badge {
     background-color: #002452;
     padding: 6px 12px;
@@ -737,7 +725,7 @@ function renderGroup(group) {
         : 0;
     document.getElementById('amount-text').textContent = totalSavings.toString();
     
-    // Badge (admin or completed) - use isCompleted from API; fallback to all isPaid so shared link shows completed when last person marked paid
+    // Badge (completed only) - use isCompleted from API; fallback to all isPaid so shared link shows completed when last person marked paid
     const badgeContainer = document.getElementById('badge-container');
     const allPaidOut = group.isCompleted === true || group.status === 'COMPLETED' ||
         (group.participants && group.participants.every(p => p.hasReceivedPayment === true)) ||
@@ -745,7 +733,7 @@ function renderGroup(group) {
     if (allPaidOut) {
         badgeContainer.innerHTML = '<div class="completed-badge"><div class="completed-text">COMPLETED</div></div>';
     } else {
-        badgeContainer.innerHTML = '<div class="admin-badge"><div class="admin-text">ADMIN</div></div>';
+        badgeContainer.innerHTML = '';
     }
     
     // Next recipient
@@ -845,12 +833,14 @@ function renderLogs(logs) {
         return;
     }
     
-    container.innerHTML = '<div class="logs-list">' + logs.slice(0, 3).map(log => {
+    container.innerHTML = '<div class="logs-list">' + logs.slice(0, 10).map(log => {
         const timestamp = log.createdAt || log.paidAt;
         const dateLabel = timestamp ? new Date(timestamp).toLocaleString() : '';
+        const isActivity = log.type === 'group_created' || log.type === 'spin';
         const participantName = log.paidBy?.name || log.paidTo?.name || 'Unknown';
         const roundText = typeof log.roundNumber === 'number' ? \` • Round \${log.roundNumber}\` : '';
-        const amountText = typeof log.amount === 'number' && log.amount > 0 ? \`<div class="log-sub-text">Amount: $\${log.amount}</div>\` : '';
+        const mainText = isActivity ? (log.description || '') : (log.description || (participantName + ' paid' + roundText));
+        const amountText = !isActivity && typeof log.amount === 'number' && log.amount > 0 ? \`<div class="log-sub-text">Amount: $\${log.amount}</div>\` : '';
         
         return \`
             <div class="log-item">
@@ -861,7 +851,7 @@ function renderLogs(logs) {
                         </svg>
                     </div>
                     <div class="log-text-container">
-                        <div class="log-main-text">\${escapeHtml(participantName)} paid\${roundText}</div>
+                        <div class="log-main-text">\${escapeHtml(mainText)}</div>
                         \${amountText}
                     </div>
                 </div>
