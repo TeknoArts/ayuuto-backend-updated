@@ -706,13 +706,8 @@ async function loadGroup() {
             throw new Error('Share code is missing. Please check the share link.');
         }
         
-        // Use shareCode instead of token - no token in URL
-        // URL encode the shareCode to handle special characters
         const encodedShareCode = encodeURIComponent(shareCode);
-        // Strong cache buster so shared link always gets fresh data
-        const timestamp = new Date().getTime();
-        const r = Math.random().toString(36).slice(2);
-        const apiUrl = \`\${API_BASE_URL}/groups/view/\${encodedShareCode}?_t=\${timestamp}&_r=\${r}\`;
+        const apiUrl = \`\${API_BASE_URL}/groups/view/\${encodedShareCode}?t=\${Date.now()}\`;
         
         console.log('Loading group with shareCode:', shareCode);
         console.log('API URL:', apiUrl);
@@ -751,11 +746,9 @@ async function loadGroup() {
             groupId = data.data.group.id;
         }
         
-        // Render the group view so the page always shows content (no auto redirect)
         renderGroup(data.data.group);
         hideLoading();
-        // Connect SSE for real-time updates when page is visible
-        if (document.visibilityState === 'visible') connectSSE();
+        if (document.visibilityState === 'visible') startRealtime();
     } catch (error) {
         console.error('Error loading group:', error);
         showError(error.message || 'Failed to load group. Please check the link and try again.');
@@ -960,21 +953,21 @@ function showError(message) {
 }
 
 
-// SSE (Server-Sent Events) for real-time updates - no polling
+// SSE (Server-Sent Events) - real-time updates, no polling
 var sseSource = null;
 var sseReconnectDelay = 2000;
 var sseReconnectTimer = null;
 
-function connectSSE() {
+function startRealtime() {
     if (!shareCode) return;
-    disconnectSSE();
+    stopRealtime();
     var streamUrl = API_BASE_URL + '/groups/view/' + encodeURIComponent(shareCode) + '/stream';
     try {
         sseSource = new EventSource(streamUrl);
         sseSource.addEventListener('group_update', function(e) {
             try {
-                var updatedGroup = JSON.parse(e.data);
-                renderGroup(updatedGroup);
+                var parsed = JSON.parse(e.data);
+                if (parsed && parsed.group) renderGroup(parsed.group);
             } catch (err) {
                 console.error('SSE: Failed to parse group_update:', err);
             }
@@ -984,7 +977,7 @@ function connectSSE() {
             sseSource = null;
             if (document.visibilityState === 'visible') {
                 sseReconnectTimer = setTimeout(function() {
-                    connectSSE();
+                    startRealtime();
                 }, sseReconnectDelay);
             }
         };
@@ -992,13 +985,13 @@ function connectSSE() {
         console.error('SSE: Failed to connect:', err);
         if (document.visibilityState === 'visible') {
             sseReconnectTimer = setTimeout(function() {
-                connectSSE();
+                startRealtime();
             }, sseReconnectDelay);
         }
     }
 }
 
-function disconnectSSE() {
+function stopRealtime() {
     if (sseReconnectTimer) {
         clearTimeout(sseReconnectTimer);
         sseReconnectTimer = null;
@@ -1012,14 +1005,14 @@ function disconnectSSE() {
 document.addEventListener('visibilitychange', function() {
     if (document.visibilityState === 'visible' && shareCode) {
         loadGroup();
-        connectSSE();
+        startRealtime();
     } else {
-        disconnectSSE();
+        stopRealtime();
     }
 });
 window.addEventListener('pageshow', function(e) {
     if (e.persisted && shareCode) loadGroup();
-    if (document.visibilityState === 'visible' && shareCode) connectSSE();
+    if (document.visibilityState === 'visible' && shareCode) startRealtime();
 });
 
 // "Open in App" button - deep link only when user taps (no auto-redirect)

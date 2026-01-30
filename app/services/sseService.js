@@ -39,7 +39,7 @@ function unsubscribe(shareCode, res) {
 
 /**
  * Broadcast updated group data to all subscribers for a shareCode.
- * Pushes an SSE event named "group_update" with JSON payload.
+ * Pushes an SSE event named "group_update" with JSON payload { group: updatedGroup }.
  * @param {string} shareCode - Group share code
  * @param {object} updatedGroup - Public group object (same format as GET /groups/view/:shareCode)
  */
@@ -49,7 +49,7 @@ function broadcastGroupUpdate(shareCode, updatedGroup) {
   const set = subscribers.get(key);
   if (!set || set.size === 0) return;
 
-  const payload = JSON.stringify(updatedGroup);
+  const payload = JSON.stringify({ group: updatedGroup });
   const data = `event: group_update\ndata: ${payload}\n\n`;
 
   set.forEach((res) => {

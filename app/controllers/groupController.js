@@ -961,16 +961,14 @@ exports.spinForOrder = async (req, res, next) => {
 
     // Broadcast real-time update to public group view (SSE)
     if (group.shareCode && group.isShareable) {
-      setImmediate(async () => {
-        try {
-          const groupData = await getPublicGroupData(group.shareCode);
-          if (groupData) {
-            sseService.broadcastGroupUpdate(group.shareCode, groupData);
-          }
-        } catch (broadcastErr) {
-          console.error('Error broadcasting group update:', broadcastErr);
+      try {
+        const groupData = await getPublicGroupData(group.shareCode);
+        if (groupData) {
+          sseService.broadcastGroupUpdate(group.shareCode, groupData);
         }
-      });
+      } catch (broadcastErr) {
+        console.error('Error broadcasting group update:', broadcastErr);
+      }
     }
 
     res.status(200).json({
@@ -1131,18 +1129,16 @@ exports.updatePaymentStatus = async (req, res, next) => {
       });
     }
 
-    // Broadcast real-time update to public group view (SSE)
+    // Broadcast real-time update to public group view (SSE) - run BEFORE response so webview updates when Pay Now is clicked
     if (group.shareCode && group.isShareable) {
-      setImmediate(async () => {
-        try {
-          const groupData = await getPublicGroupData(group.shareCode);
-          if (groupData) {
-            sseService.broadcastGroupUpdate(group.shareCode, groupData);
-          }
-        } catch (broadcastErr) {
-          console.error('Error broadcasting group update:', broadcastErr);
+      try {
+        const groupData = await getPublicGroupData(group.shareCode);
+        if (groupData) {
+          sseService.broadcastGroupUpdate(group.shareCode, groupData);
         }
-      });
+      } catch (broadcastErr) {
+        console.error('Error broadcasting group update:', broadcastErr);
+      }
     }
 
     res.status(200).json({
@@ -1723,16 +1719,14 @@ exports.nextRound = async (req, res, next) => {
 
     // Broadcast real-time update to public group view (SSE)
     if (group.shareCode && group.isShareable) {
-      setImmediate(async () => {
-        try {
-          const groupData = await getPublicGroupData(group.shareCode);
-          if (groupData) {
-            sseService.broadcastGroupUpdate(group.shareCode, groupData);
-          }
-        } catch (broadcastErr) {
-          console.error('Error broadcasting group update:', broadcastErr);
+      try {
+        const groupData = await getPublicGroupData(group.shareCode);
+        if (groupData) {
+          sseService.broadcastGroupUpdate(group.shareCode, groupData);
         }
-      });
+      } catch (broadcastErr) {
+        console.error('Error broadcasting group update:', broadcastErr);
+      }
     }
 
     res.status(200).json({

@@ -176,7 +176,7 @@ exports.streamGroupByShareCode = async (req, res, next) => {
     // Disable all caching for SSE
     res.set({
       'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
       'Pragma': 'no-cache',
       'Expires': '0',
       'Connection': 'keep-alive',
