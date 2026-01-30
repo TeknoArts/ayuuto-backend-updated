@@ -898,9 +898,9 @@ function renderLogs(logs) {
         const timestamp = log.createdAt || log.paidAt;
         const dateLabel = timestamp ? new Date(timestamp).toLocaleString() : '';
         const isActivity = log.type === 'group_created' || log.type === 'spin';
-        const participantName = log.paidBy?.name || log.paidTo?.name || 'Unknown';
+        const participantName = log.paidBy?.name || log.paidTo?.name;
         const roundText = typeof log.roundNumber === 'number' ? \` • Round \${log.roundNumber}\` : '';
-        const mainText = isActivity ? (log.description || '') : (log.description || (participantName + ' paid' + roundText));
+        const mainText = isActivity ? (log.description || '') : (log.description || (participantName ? (participantName + ' paid' + roundText) : ('Payment recorded' + roundText)));
         const amountText = !isActivity && typeof log.amount === 'number' && log.amount > 0 ? \`<div class="log-sub-text">Amount: $\${log.amount}</div>\` : '';
         
         return \`

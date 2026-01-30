@@ -88,11 +88,15 @@ async function getPublicGroupData(shareCode) {
             const participantName = log.participantId
               ? participantNameById.get(log.participantId.toString()) || null
               : null;
+            const paidByName = log.paidBy && log.paidBy.name ? log.paidBy.name : 'Admin';
+            const description = log.note || (participantName
+              ? `${participantName} was paid by ${paidByName}`
+              : `Payment of $${log.amount || 0}`);
             return {
               type: 'payment',
-              description: log.note || `Payment of ${log.amount || 0}`,
+              description,
               amount: showAmounts ? log.amount : undefined,
-              paidBy: log.paidBy ? { name: log.paidBy.name } : null,
+              paidBy: { name: paidByName },
               paidTo: participantName ? { name: participantName } : null,
               createdAt: log.createdAt || log.paidAt,
             };
