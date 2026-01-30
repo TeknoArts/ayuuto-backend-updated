@@ -529,6 +529,29 @@ body {
     line-height: 24px;
 }
 
+.open-in-app-container {
+    margin-top: 24px;
+    margin-bottom: 20px;
+    display: flex;
+    justify-content: center;
+}
+
+.open-in-app-btn {
+    background-color: #FFD700;
+    color: #011b3d;
+    border: none;
+    border-radius: 12px;
+    padding: 14px 24px;
+    font-size: 16px;
+    font-weight: bold;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+}
+
+.open-in-app-btn:hover {
+    opacity: 0.9;
+}
+
 @media (max-width: 600px) {
     body {
         padding: 20px;
@@ -610,6 +633,10 @@ body {
             <div class="completion-title">AYUUTO COMPLETED</div>
             <div class="completion-message">All members have been paid out</div>
         </div>
+
+        <div id="open-in-app-container" class="open-in-app-container hidden">
+            <button type="button" id="open-in-app-btn" class="open-in-app-btn">Open in Ayuuto App</button>
+        </div>
     </div>
 
     <script>
@@ -688,14 +715,12 @@ async function loadGroup() {
             throw new Error('Invalid response from server');
         }
         
-        // Store groupId for deep linking
+        // Store groupId for deep linking (user can tap "Open in App" instead of auto-redirect)
         if (data.data.group && data.data.group.id) {
             groupId = data.data.group.id;
-            // Try to deep link to app (will show web view if app not installed)
-            tryDeepLink();
         }
         
-        // Render the group view (will show if app doesn't open)
+        // Render the group view so the page always shows content (no auto redirect)
         renderGroup(data.data.group);
         hideLoading();
     } catch (error) {
@@ -767,6 +792,18 @@ function renderGroup(group) {
     // Completion card
     if (allPaidOut) {
         document.getElementById('completion-card').classList.remove('hidden');
+    }
+    
+    // Show "Open in App" only on mobile when we have groupId
+    const openInAppEl = document.getElementById('open-in-app-container');
+    const ua = navigator.userAgent || navigator.vendor || '';
+    const isMobile = /iPad|iPhone|iPod|android/i.test(ua);
+    if (openInAppEl) {
+        if (groupId && isMobile) {
+            openInAppEl.classList.remove('hidden');
+        } else {
+            openInAppEl.classList.add('hidden');
+        }
     }
     
     document.getElementById('group-content').classList.remove('hidden');
@@ -896,6 +933,13 @@ document.addEventListener('visibilitychange', () => {
 // Refetch when page is restored from back-forward cache (e.g. user pressed back)
 window.addEventListener('pageshow', (e) => {
     if (e.persisted && shareCode) loadGroup();
+});
+
+// "Open in App" button - deep link only when user taps (no auto-redirect)
+document.addEventListener('click', (e) => {
+    if (e.target && e.target.id === 'open-in-app-btn') {
+        tryDeepLink();
+    }
 });
 
 // Wait for DOM to be ready
