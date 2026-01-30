@@ -496,11 +496,10 @@ exports.sendWelcomeEmail = async (email, name) => {
 exports.sendGroupInvitationEmail = async (participantEmail, participantName, groupName, adminName, groupId = null, shareCode = null) => {
   const subject = `You've been added to ${groupName} on Ayuuto`;
   
-  // Generate view group URL using shareCode
-  // View Group button in emails must point to the public web view (DigitalOcean).
-  // Priority: VIEW_GROUP_BASE_URL > BACKEND_URL > FRONTEND_URL > DigitalOcean default
+  // Generate view group URL - ALWAYS use DigitalOcean for email View Group button.
+  // Do NOT use BACKEND_URL/FRONTEND_URL here - they may be set to old Railway URL.
   const DIGITALOCEAN_VIEW_URL = 'http://104.248.117.205';
-  const viewGroupBaseUrl = process.env.VIEW_GROUP_BASE_URL || process.env.BACKEND_URL || process.env.FRONTEND_URL || DIGITALOCEAN_VIEW_URL;
+  const viewGroupBaseUrl = process.env.VIEW_GROUP_BASE_URL || DIGITALOCEAN_VIEW_URL;
   
   // Generate view group URL - always use DigitalOcean URL for View Group button
   let viewGroupUrl;
