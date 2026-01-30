@@ -924,9 +924,9 @@ exports.updatePaymentStatus = async (req, res, next) => {
     const { groupId, participantId } = req.params;
     const { isPaid, source } = req.body; // source: 'checkbox' | 'pay_now' for different notification messages
 
-    // Minimal read: only fields needed for auth and response
+    // Minimal read: only fields needed for auth, response, and payment log (memberCount for group total on Pay Now)
     const group = await Group.findById(groupId)
-      .select('createdBy participants amountPerPerson name')
+      .select('createdBy participants amountPerPerson memberCount name')
       .lean();
     if (!group) {
       return res.status(404).json({
@@ -984,7 +984,9 @@ exports.updatePaymentStatus = async (req, res, next) => {
       const gId = group._id;
       const pId = participant._id;
       const pName = participant.name || '';
-      const amount = group.amountPerPerson || 0;
+      const amountPerPerson = group.amountPerPerson || 0;
+      const memberCount = group.memberCount || 0;
+      const groupTotalAmount = amountPerPerson * memberCount;
       const userId = req.user.id;
       const adminName = req.user.name || req.user.email || 'Admin';
       const isPayNow = source === 'pay_now';
@@ -997,8 +999,9 @@ exports.updatePaymentStatus = async (req, res, next) => {
           }
           if (currentRound) {
             const note = isPayNow
-              ? undefined
+              ? `${pName} was paid by Admin`
               : `Admin collected the payment from ${pName}`;
+            const amount = isPayNow ? groupTotalAmount : amountPerPerson;
             await PaymentLog.create({
               group: gId,
               round: currentRound._id,
