@@ -114,8 +114,16 @@ body {
 }
 
 .error-message {
-    color: rgba(255, 255, 255, 0.7);
+    color: rgba(255, 255, 255, 0.9);
+    margin-bottom: 12px;
+    font-weight: 500;
+}
+
+.error-hint {
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 14px;
     margin-bottom: 24px;
+    line-height: 1.4;
 }
 
 .error button {
@@ -579,6 +587,7 @@ body {
         <div class="error-icon">⚠️</div>
         <h2>Unable to Load Group</h2>
         <p class="error-message" id="error-message"></p>
+        <p class="error-hint">The share code may be invalid, sharing may be disabled for this group, or the link may have expired. Ask the group admin to send a new share link.</p>
         <button onclick="location.reload()">Try Again</button>
     </div>
 
@@ -640,7 +649,10 @@ body {
     </div>
 
     <script>
-const API_BASE_URL = '${apiBaseUrl}';
+// Use same origin as the page so fetch works (avoids wrong protocol/host from proxy)
+const API_BASE_URL = (typeof window !== 'undefined' && window.location && window.location.origin)
+  ? window.location.origin + '/api/public'
+  : '${apiBaseUrl}';
 const shareCode = '${shareCode}';
 let groupId = null;
 let deepLinkAttempted = false;
