@@ -1303,17 +1303,19 @@ exports.getGroupLogs = async (req, res, next) => {
       description: log.note || undefined,
     }));
 
-    const activityMapped = activityLogs.map((log) => ({
-      id: log._id.toString(),
-      type: log.type,
-      groupId: group._id.toString(),
-      description: log.type === 'group_created'
-        ? 'Admin created group'
-        : log.type === 'spin'
-          ? 'Spin for order was clicked'
-          : '',
-      createdAt: log.createdAt,
-    }));
+    const activityMapped = activityLogs.map((log) => {
+      let description = '';
+      if (log.type === 'group_created') description = 'Admin created group';
+      else if (log.type === 'spin') description = 'Spin for order was clicked';
+      else if (log.type === 'update_emails') description = 'Admin updated participant emails';
+      return {
+        id: log._id.toString(),
+        type: log.type,
+        groupId: group._id.toString(),
+        description,
+        createdAt: log.createdAt,
+      };
+    });
 
     const mappedLogs = [...paymentMapped, ...activityMapped].sort(
       (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
