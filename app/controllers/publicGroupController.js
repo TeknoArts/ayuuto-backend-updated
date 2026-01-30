@@ -109,13 +109,10 @@ exports.viewGroupByShareCode = async (req, res, next) => {
       };
     });
     
-    // Compute completion from participants so shared link always shows correct state
-    // Include "all isPaid" so shared link shows completed when last recipient was just marked paid (before Next Round clicked)
+    // Group is completed only when ALL members have received their payout (hasReceivedPayment), not when all have paid (isPaid)
     const allHasReceivedPayment = group.participants && group.participants.length > 0 &&
       group.participants.every(p => p.hasReceivedPayment === true);
-    const allMarkedPaid = group.participants && group.participants.length > 0 &&
-      group.participants.every(p => p.isPaid === true);
-    const isCompleted = group.status === 'COMPLETED' || allHasReceivedPayment || allMarkedPaid;
+    const isCompleted = group.status === 'COMPLETED' || allHasReceivedPayment;
 
     const response = {
       success: true,
@@ -140,8 +137,8 @@ exports.viewGroupByShareCode = async (req, res, next) => {
                 name: p.name,
                 order: p.order,
                 isPaid: shareSettings.showPaymentStatus ? p.isPaid : undefined,
-                // When group completed, always set true for every participant so PAID OUT badge shows for all in web view
-                hasReceivedPayment: isCompleted ? true : (shareSettings.showPaymentStatus ? (p.hasReceivedPayment === true) : false),
+                // PAID OUT = only when this participant has received their payout (hasReceivedPayment), not when group is completed
+                hasReceivedPayment: shareSettings.showPaymentStatus ? (p.hasReceivedPayment === true) : false,
               }))
             : [],
           rounds: roundsWithRecipient,

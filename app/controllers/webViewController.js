@@ -762,11 +762,10 @@ function renderGroup(group) {
         : 0;
     document.getElementById('amount-text').textContent = totalSavings.toString();
     
-    // Badge (completed only) - use isCompleted from API; fallback to all isPaid so shared link shows completed when last person marked paid
+    // Badge (completed only) - group is completed when ALL have received payout (hasReceivedPayment), not when all have paid (isPaid)
     const badgeContainer = document.getElementById('badge-container');
     const allPaidOut = group.isCompleted === true || group.status === 'COMPLETED' ||
-        (group.participants && group.participants.every(p => p.hasReceivedPayment === true)) ||
-        (group.participants && group.participants.every(p => p.isPaid === true));
+        (group.participants && group.participants.every(p => p.hasReceivedPayment === true));
     if (allPaidOut) {
         badgeContainer.innerHTML = '<div class="completed-badge"><div class="completed-text">COMPLETED</div></div>';
     } else {
@@ -829,8 +828,7 @@ function renderParticipants(participants, group) {
     const currentRecipientIndex = group.currentRecipientIndex || 0;
     const groupCompleted = group.isCompleted === true || group.status === 'COMPLETED';
     const allPaidOut = groupCompleted ||
-        (participants.length > 0 && participants.every(p => p.hasReceivedPayment === true)) ||
-        (participants.length > 0 && participants.every(p => p.isPaid === true));
+        (participants.length > 0 && participants.every(p => p.hasReceivedPayment === true));
     
     const list = document.getElementById('participants-list');
     list.innerHTML = sorted.map((p, index) => {
@@ -845,9 +843,9 @@ function renderParticipants(participants, group) {
             orderNumberHtml = \`<div class="order-number \${orderPaidClass}"><div class="order-number-text">\${p.order + 1}</div></div>\`;
         }
         
-        // Show PAID OUT badge for every participant when group is completed, or when this participant received payout
+        // Show PAID OUT only for participants who have received their payout (hasReceivedPayment)
         let paidOutTag = '';
-        if (groupCompleted || hasReceivedPayment || allPaidOut) {
+        if (hasReceivedPayment) {
             paidOutTag = '<div class="paid-out-tag-inline"><div class="paid-out-text-inline">PAID OUT</div></div>';
         }
         
