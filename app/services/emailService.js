@@ -650,7 +650,7 @@ exports.sendGroupInvitationEmail = async (participantEmail, participantName, gro
           <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin: 0 auto; width: 100%; max-width: 300px;">
             <tr>
               <td align="center" style="background-color: #4CAF50; border-radius: 8px; padding: 0;">
-                <a href="${viewGroupUrl}" target="_blank" style="display: block; color: #ffffff !important; text-decoration: none !important; background-color: #4CAF50; padding: 18px 36px; border-radius: 8px; font-weight: bold; font-size: 18px; text-align: center; border: none; width: 100%; -webkit-text-size-adjust: none; mso-hide: all;">View Group</a>
+                <a href="${viewGroupUrl}" style="display: block; color: #ffffff !important; text-decoration: none !important; background-color: #4CAF50; padding: 18px 36px; border-radius: 8px; font-weight: bold; font-size: 18px; text-align: center; border: none; width: 100%; -webkit-text-size-adjust: none; mso-hide: all;">View Group</a>
               </td>
             </tr>
           </table>
@@ -663,7 +663,7 @@ exports.sendGroupInvitationEmail = async (participantEmail, participantName, gro
         
         <p style="color: #999; font-size: 14px; margin-top: 20px; text-align: center;">
           Click the button above to view the group details.<br>
-          If you have the Ayuuto app installed, it will open automatically.
+          If the link does not work, copy and paste it into your browser.
         </p>
         
         <p style="color: #666; font-size: 12px; margin-top: 20px; text-align: center;">
