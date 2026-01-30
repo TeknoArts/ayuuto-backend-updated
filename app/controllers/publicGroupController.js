@@ -141,8 +141,10 @@ exports.viewGroupByShareCode = async (req, res, next) => {
                 name: p.name,
                 order: p.order,
                 isPaid: showPaymentStatus ? p.isPaid : undefined,
-                // PAID OUT = only when this participant has received their payout (hasReceivedPayment)
-                hasReceivedPayment: showPaymentStatus ? (p.hasReceivedPayment === true) : false,
+                // When group is completed, show all as PAID OUT in webview; otherwise use actual hasReceivedPayment
+                hasReceivedPayment: showPaymentStatus
+                  ? (isCompleted ? true : (p.hasReceivedPayment === true))
+                  : false,
               }))
             : [],
           rounds: roundsWithRecipient,
