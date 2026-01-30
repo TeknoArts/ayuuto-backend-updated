@@ -1979,3 +1979,124 @@ exports.regenerateShareToken = async (req, res, next) => {
     next(err);
   }
 };
+
+// @desc    Update participant emails and send invitation emails
+// @route   PUT /api/groups/:groupId/participants/emails
+// @access  Private (Group Admin only)
+exports.updateParticipantEmails = async (req, res, next) => {
+  try {
+    const { groupId } = req.params;
+    const { participants } = req.body; // Array of { participantId, email }
+    const userId = req.user.id;
+
+    if (!participants || !Array.isArray(participants)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Participants array is required',
+      });
+    }
+
+    const group = await Group.findById(groupId).populate('createdBy', 'name email');
+    if (!group) {
+      return res.status(404).json({
+        success: false,
+        message: 'Group not found',
+      });
+    }
+
+    // Check authorization - only group admin can update emails
+    if (group.createdBy._id.toString() !== userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only group admin can update participant emails',
+      });
+    }
+
+    const updatedParticipants = [];
+    const emailsToSend = [];
+
+    // Update each participant's email
+    for (const update of participants) {
+      const { participantId, email } = update;
+      
+      if (!participantId) continue;
+      
+      const participant = group.participants.id(participantId);
+      if (!participant) continue;
+      
+      // Normalize email
+      const normalizedEmail = email ? email.trim().toLowerCase() : null;
+      
+      // Check if email changed and is valid
+      const emailChanged = normalizedEmail && participant.email !== normalizedEmail;
+      
+      if (normalizedEmail) {
+        participant.email = normalizedEmail;
+        updatedParticipants.push({
+          id: participantId,
+          name: participant.name,
+          email: normalizedEmail,
+        });
+        
+        // Queue email to be sent if email was added/changed
+        if (emailChanged) {
+          emailsToSend.push({
+            email: normalizedEmail,
+            name: participant.name,
+          });
+        }
+      }
+    }
+
+    await group.save();
+
+    // Send invitation emails to participants with new/updated emails
+    const emailResults = [];
+    for (const emailData of emailsToSend) {
+      try {
+        await sendGroupInvitationEmail(
+          emailData.email,
+          emailData.name,
+          group.name,
+          group.createdBy.name,
+          group._id.toString(),
+          group.shareCode
+        );
+        emailResults.push({
+          email: emailData.email,
+          success: true,
+        });
+        console.log(`✅ Email sent to ${emailData.email} for group ${group.name}`);
+      } catch (emailError) {
+        console.error(`❌ Failed to send email to ${emailData.email}:`, emailError.message);
+        emailResults.push({
+          email: emailData.email,
+          success: false,
+          error: emailError.message,
+        });
+      }
+    }
+
+    // Log activity
+    await GroupActivityLog.create({
+      group: groupId,
+      action: 'UPDATE_EMAILS',
+      performedBy: userId,
+      details: {
+        updatedCount: updatedParticipants.length,
+        emailsSent: emailResults.filter(e => e.success).length,
+      },
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `Updated ${updatedParticipants.length} participant email(s). Sent ${emailResults.filter(e => e.success).length} invitation email(s).`,
+      data: {
+        updatedParticipants,
+        emailResults,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};

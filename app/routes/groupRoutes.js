@@ -14,6 +14,7 @@ router.get('/:groupId', groupController.getGroupDetails);
 router.get('/:groupId/logs', groupController.getGroupLogs);
 router.delete('/:groupId', groupController.deleteGroup);
 router.post('/:groupId/participants', groupController.addParticipants);
+router.put('/:groupId/participants/emails', groupController.updateParticipantEmails);
 router.delete('/:groupId/participants/:participantId', groupController.removeParticipant);
 router.put('/:groupId/collection', groupController.setCollectionDetails);
 router.post('/:groupId/spin', groupController.spinForOrder);
