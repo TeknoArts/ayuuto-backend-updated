@@ -2080,12 +2080,8 @@ exports.updateParticipantEmails = async (req, res, next) => {
     // Log activity
     await GroupActivityLog.create({
       group: groupId,
-      action: 'UPDATE_EMAILS',
-      performedBy: userId,
-      details: {
-        updatedCount: updatedParticipants.length,
-        emailsSent: emailResults.filter(e => e.success).length,
-      },
+      type: 'update_emails',
+      createdBy: userId,
     });
 
     res.status(200).json({

@@ -11,7 +11,7 @@ const groupActivityLogSchema = new mongoose.Schema(
     },
     type: {
       type: String,
-      enum: ['group_created', 'spin'],
+      enum: ['group_created', 'spin', 'update_emails'],
       required: true,
     },
     createdBy: {
