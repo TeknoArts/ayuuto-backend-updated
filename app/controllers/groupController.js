@@ -6,18 +6,96 @@ const User = require('../models/User');
 const notificationService = require('../services/notificationService');
 const { sendGroupInvitationEmail } = require('../services/emailService');
 
-// @desc    Create a new group
+// @desc    Create a new group with participants and details (simplified flow)
 // @route   POST /api/groups
 // @access  Private
 exports.createGroup = async (req, res, next) => {
   try {
-    const { name, memberCount } = req.body;
+    const { name, memberCount, participants, amountPerPerson, collectionDate } = req.body;
     const userId = req.user.id;
 
-    if (!name || !memberCount) {
+    // Validate required fields
+    if (!name) {
       return res.status(400).json({
         success: false,
-        message: 'Group name and member count are required',
+        message: 'Group name is required',
+      });
+    }
+
+    // If full group creation (with participants and details)
+    if (participants && Array.isArray(participants) && participants.length >= 2) {
+      // Validate amount and collection date if provided
+      if (amountPerPerson && amountPerPerson > 0) {
+        const dateNum = parseInt(collectionDate);
+        if (!dateNum || dateNum < 1 || dateNum > 31) {
+          return res.status(400).json({
+            success: false,
+            message: 'Collection date must be between 1 and 31',
+          });
+        }
+      }
+
+      // Create group with all details
+      const group = await Group.create({
+        name,
+        memberCount: participants.length,
+        createdBy: userId,
+        participants: participants.map(p => ({
+          name: p.name || p.email || 'Participant',
+          email: p.email || null,
+          order: null,
+          isPaid: false,
+          hasReceivedPayment: false,
+        })),
+        amountPerPerson: amountPerPerson || 0,
+        frequency: 'MONTHLY',
+        collectionDate: collectionDate ? parseInt(collectionDate) : 1,
+        isOrderSet: false,
+      });
+
+      // Log group creation
+      await GroupActivityLog.create({
+        group: group._id,
+        type: 'group_created',
+        createdBy: userId,
+      });
+
+      // Return full group details
+      const totalSavings = (amountPerPerson || 0) * participants.length;
+      
+      return res.status(201).json({
+        success: true,
+        data: {
+          group: {
+            id: group._id,
+            name: group.name,
+            memberCount: group.memberCount,
+            participants: group.participants.map(p => ({
+              id: p._id,
+              name: p.name,
+              email: p.email,
+              order: p.order,
+              isPaid: p.isPaid,
+              hasReceivedPayment: p.hasReceivedPayment,
+            })),
+            amountPerPerson: group.amountPerPerson,
+            frequency: group.frequency,
+            collectionDate: group.collectionDate,
+            totalSavings: totalSavings,
+            isOrderSet: group.isOrderSet,
+            currentRecipientIndex: group.currentRecipientIndex,
+            status: group.status,
+            createdAt: group.createdAt,
+          },
+        },
+      });
+    }
+
+    // Legacy support: Simple group creation (backwards compatibility)
+    if (!memberCount) {
+      return res.status(400).json({
+        success: false,
+        message: 'Member count or participants array is required',
       });
     }
 
