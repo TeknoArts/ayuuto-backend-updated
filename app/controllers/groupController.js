@@ -1016,17 +1016,22 @@ exports.updatePaymentStatus = async (req, res, next) => {
     const { groupId, participantId } = req.params;
     const { isPaid, source } = req.body; // source: 'checkbox' | 'pay_now' for different notification messages
 
-    // Minimal read: only fields needed for auth, response, and payment log (memberCount for group total on Pay Now)
-    const group = await Group.findById(groupId)
-      .select('createdBy participants amountPerPerson memberCount name shareCode isShareable')
-      .lean();
-    if (!group) {
+    const isPayNow = source === 'pay_now';
+    const paidAtValue = isPaid ? new Date() : null;
+
+    // For Pay Now: load full group to possibly mark as COMPLETED when last recipient is paid
+    const groupDoc = isPayNow && isPaid
+      ? await Group.findById(groupId).select('createdBy participants amountPerPerson memberCount name shareCode isShareable currentRecipientIndex isOrderSet')
+      : await Group.findById(groupId).select('createdBy participants amountPerPerson memberCount name shareCode isShareable').lean();
+
+    if (!groupDoc) {
       return res.status(404).json({
         success: false,
         message: 'Group not found',
       });
     }
 
+    const group = groupDoc.toObject ? groupDoc.toObject() : groupDoc;
     const createdById = group.createdBy && (group.createdBy._id ? group.createdBy._id.toString() : group.createdBy.toString());
     if (createdById !== req.user.id) {
       return res.status(403).json({
@@ -1045,17 +1050,62 @@ exports.updatePaymentStatus = async (req, res, next) => {
       });
     }
 
-    const paidAtValue = isPaid ? new Date() : null;
-    // Atomic update: only the participant subdocument, no full document load/save
-    const result = await Group.updateOne(
-      { _id: groupId, 'participants._id': participant._id },
-      { $set: { 'participants.$.isPaid': isPaid, 'participants.$.paidAt': paidAtValue } }
-    );
-    if (result.modifiedCount === 0) {
-      return res.status(500).json({
-        success: false,
-        message: 'Failed to update payment status',
+    if (isPayNow && isPaid && groupDoc.toObject) {
+      // Pay Now: use full document to potentially mark group COMPLETED when last recipient is paid
+      const participantInDoc = groupDoc.participants.id(participantId) || groupDoc.participants.find(p => p._id.toString() === participantId);
+      if (!participantInDoc) {
+        return res.status(404).json({ success: false, message: 'Participant not found' });
+      }
+
+      const sortedParticipants = [...groupDoc.participants].sort((a, b) => {
+        if (a.order === null) return 1;
+        if (b.order === null) return -1;
+        return a.order - b.order;
       });
+      const currentRecipientIndex = groupDoc.currentRecipientIndex ?? 0;
+      const currentRecipient = sortedParticipants[currentRecipientIndex];
+      const isCurrentRecipient = currentRecipient && currentRecipient._id.toString() === participantId;
+
+      if (isCurrentRecipient) {
+        // Pay Now for current recipient: mark as paid and received payout
+        participantInDoc.isPaid = true;
+        participantInDoc.paidAt = paidAtValue;
+        participantInDoc.hasReceivedPayment = true;
+        participantInDoc.receivedPaymentAt = paidAtValue;
+
+        // Check if all participants have now received payment (group complete)
+        const allNowPaidOut = groupDoc.participants.every(p => p.hasReceivedPayment === true);
+        if (allNowPaidOut) {
+          groupDoc.status = 'COMPLETED';
+        }
+      } else {
+        participantInDoc.isPaid = true;
+        participantInDoc.paidAt = paidAtValue;
+      }
+
+      await groupDoc.save();
+
+      // If completed, mark current round as COMPLETED
+      if (groupDoc.status === 'COMPLETED') {
+        const currentRound = await Round.findOne({ group: groupId, status: 'IN_PROGRESS' });
+        if (currentRound) {
+          currentRound.status = 'COMPLETED';
+          currentRound.completedAt = paidAtValue;
+          await currentRound.save();
+        }
+      }
+    } else {
+      // Checkbox or Pay Now with lean: use atomic update
+      const result = await Group.updateOne(
+        { _id: groupId, 'participants._id': participant._id },
+        { $set: { 'participants.$.isPaid': isPaid, 'participants.$.paidAt': paidAtValue } }
+      );
+      if (result.modifiedCount === 0) {
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to update payment status',
+        });
+      }
     }
 
     // Create payment log BEFORE responding so app/webview refetch sees it (no race)
@@ -1068,7 +1118,6 @@ exports.updatePaymentStatus = async (req, res, next) => {
       const groupTotalAmount = amountPerPerson * memberCount;
       const userId = req.user.id;
       const adminName = req.user.name || req.user.email || 'Admin';
-      const isPayNow = source === 'pay_now';
 
       try {
         let currentRound = await Round.findOne({ group: gId, status: 'IN_PROGRESS' }).lean();
