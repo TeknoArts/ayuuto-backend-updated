@@ -146,6 +146,8 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
+    flex-wrap: wrap;
+    gap: 12px;
     margin-bottom: 24px;
     padding: 0 20px;
 }
@@ -560,6 +562,22 @@ body {
     opacity: 0.9;
 }
 
+.refresh-btn {
+    background: transparent;
+    color: #61a5fb;
+    border: 1px solid #61a5fb;
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-left: 12px;
+}
+
+.refresh-btn:hover {
+    opacity: 0.9;
+}
+
 @media (max-width: 600px) {
     body {
         padding: 20px;
@@ -594,6 +612,7 @@ body {
     <div id="group-content" class="group-content hidden">
         <div class="group-name-container">
             <div class="group-name" id="group-name"></div>
+            <button type="button" id="refresh-btn" class="refresh-btn" title="Refresh to see latest">Refresh</button>
         </div>
 
         <div class="savings-card">
@@ -932,13 +951,11 @@ function showError(message) {
 }
 
 
-// Refetch when user returns to the tab so shared link always shows fresh data
-let wasHidden = false;
+// Refetch whenever the tab becomes visible so webview stays in sync with app (e.g. after completing group in app)
 document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && wasHidden && shareCode) {
+    if (document.visibilityState === 'visible' && shareCode) {
         loadGroup();
     }
-    if (document.visibilityState === 'hidden') wasHidden = true;
 });
 // Refetch when page is restored from back-forward cache (e.g. user pressed back)
 window.addEventListener('pageshow', (e) => {
@@ -949,6 +966,9 @@ window.addEventListener('pageshow', (e) => {
 document.addEventListener('click', (e) => {
     if (e.target && e.target.id === 'open-in-app-btn') {
         tryDeepLink();
+    }
+    if (e.target && e.target.id === 'refresh-btn') {
+        if (shareCode) loadGroup();
     }
 });
 
