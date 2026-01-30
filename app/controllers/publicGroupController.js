@@ -83,9 +83,13 @@ exports.viewGroupByShareCode = async (req, res, next) => {
         .lean(),
     ]);
 
-    // Build response based on share settings
+    // Build response based on share settings (default to true when undefined so webview shows completed state)
     const shareSettings = group.shareSettings || {};
-    
+    const showParticipants = shareSettings.showParticipants !== false;
+    const showPaymentStatus = shareSettings.showPaymentStatus !== false;
+    const showActivityLog = shareSettings.showActivityLog !== false;
+    const showAmounts = shareSettings.showAmounts !== false;
+
     // Map participant IDs to names for payment logs
     const participantNameById = new Map();
     group.participants.forEach(p => {
@@ -121,7 +125,7 @@ exports.viewGroupByShareCode = async (req, res, next) => {
           id: group._id,
           name: group.name,
           memberCount: group.memberCount,
-          amountPerPerson: shareSettings.showAmounts 
+          amountPerPerson: showAmounts 
             ? group.amountPerPerson 
             : undefined,
           frequency: group.frequency,
@@ -132,17 +136,17 @@ exports.viewGroupByShareCode = async (req, res, next) => {
           createdBy: group.createdBy ? {
             name: group.createdBy.name,
           } : null,
-          participants: shareSettings.showParticipants
+          participants: showParticipants
             ? group.participants.map(p => ({
                 name: p.name,
                 order: p.order,
-                isPaid: shareSettings.showPaymentStatus ? p.isPaid : undefined,
-                // PAID OUT = only when this participant has received their payout (hasReceivedPayment), not when group is completed
-                hasReceivedPayment: shareSettings.showPaymentStatus ? (p.hasReceivedPayment === true) : false,
+                isPaid: showPaymentStatus ? p.isPaid : undefined,
+                // PAID OUT = only when this participant has received their payout (hasReceivedPayment)
+                hasReceivedPayment: showPaymentStatus ? (p.hasReceivedPayment === true) : false,
               }))
             : [],
           rounds: roundsWithRecipient,
-          activityLog: shareSettings.showActivityLog
+          activityLog: showActivityLog
             ? (() => {
                 const paymentEntries = paymentLogs.map(log => {
                   const participantName = log.participantId
@@ -151,7 +155,7 @@ exports.viewGroupByShareCode = async (req, res, next) => {
                   return {
                     type: 'payment',
                     description: log.note || `Payment of ${log.amount || 0}`,
-                    amount: shareSettings.showAmounts ? log.amount : undefined,
+                    amount: showAmounts ? log.amount : undefined,
                     paidBy: log.paidBy ? { name: log.paidBy.name } : null,
                     paidTo: participantName ? { name: participantName } : null,
                     createdAt: log.createdAt || log.paidAt,
