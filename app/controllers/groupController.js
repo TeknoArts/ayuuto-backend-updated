@@ -2141,6 +2141,24 @@ exports.updateParticipantEmails = async (req, res, next) => {
 
     await group.save();
 
+    // Ensure group has shareCode for view link - generate if missing
+    if (!group.shareCode && emailsToSend.length > 0) {
+      const { generateShareCode } = require('../utils/shareToken');
+      let shareCode;
+      let attempts = 0;
+      do {
+        shareCode = generateShareCode();
+        const existing = await Group.findOne({ shareCode });
+        if (!existing) break;
+        attempts++;
+        if (attempts > 10) throw new Error('Failed to generate unique share code');
+      } while (true);
+      group.shareCode = shareCode;
+      group.isShareable = true;
+      await group.save();
+      console.log(`[GROUP] Generated shareCode for email links: ${shareCode}`);
+    }
+
     // Send invitation emails to participants with new/updated emails
     const emailResults = [];
     for (const emailData of emailsToSend) {
@@ -2151,7 +2169,7 @@ exports.updateParticipantEmails = async (req, res, next) => {
           group.name,
           group.createdBy.name,
           group._id.toString(),
-          group.shareCode
+          group.shareCode // Now guaranteed to exist
         );
         emailResults.push({
           email: emailData.email,

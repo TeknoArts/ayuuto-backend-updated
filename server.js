@@ -109,6 +109,23 @@ app.use('/invite', inviteRoutes);
 // Web view route (for shareable links) - uses shareCode, no token in URL
 app.get('/view/:shareCode', webViewController.serveGroupView);
 
+// Redirect /view-group/:groupId to /view/:shareCode (for old emails that used groupId)
+app.get('/view-group/:groupId', async (req, res) => {
+  try {
+    const Group = require('./app/models/Group');
+    const group = await Group.findById(req.params.groupId).select('shareCode').lean();
+    const baseUrl = process.env.WEB_VIEW_BASE_URL || process.env.BACKEND_URL || 'http://104.248.117.205';
+    const urlBase = String(baseUrl).replace(/\/$/, '');
+    if (group && group.shareCode) {
+      return res.redirect(302, `${urlBase}/view/${group.shareCode}`);
+    }
+    res.redirect(302, urlBase);
+  } catch {
+    const urlBase = (process.env.WEB_VIEW_BASE_URL || process.env.BACKEND_URL || 'http://104.248.117.205').replace(/\/$/, '');
+    res.redirect(302, urlBase);
+  }
+});
+
 // Privacy Policy public page
 app.get('/privacy-policy', privacyPolicyController.servePrivacyPolicy);
 
