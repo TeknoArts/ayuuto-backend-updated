@@ -642,7 +642,7 @@ exports.sendGroupInvitationEmail = async (participantEmail, participantName, gro
         <p>You can now view group details, track payments, and stay updated on group activities.</p>
         
         <p style="color: #666; font-size: 16px; margin-top: 24px;">
-          View your group: <a href="${viewGroupUrl}" style="color: #4CAF50; word-break: break-all; text-decoration: underline;">${viewGroupUrl}</a>
+          View your group: <a href="${viewGroupUrl}" target="_blank" rel="noopener noreferrer" style="color: #4CAF50; word-break: break-all; text-decoration: underline;">${viewGroupUrl}</a>
         </p>
         
         <div class="footer">
