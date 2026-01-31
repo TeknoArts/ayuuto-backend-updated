@@ -71,6 +71,8 @@ async function getPublicGroupData(shareCode) {
     collectionDate: group.collectionDate,
     status: isCompleted ? 'COMPLETED' : (group.status || 'ACTIVE'),
     isCompleted,
+    isOrderSet: group.isOrderSet || false,
+    currentRecipientIndex: group.currentRecipientIndex != null ? group.currentRecipientIndex : 0,
     createdAt: group.createdAt,
     createdBy: group.createdBy ? { name: group.createdBy.name } : null,
     participants: showParticipants

@@ -791,14 +791,19 @@ function renderGroup(group) {
         badgeContainer.innerHTML = '';
     }
     
-    // Next recipient
+    // Next recipient - use same logic as app: participant at currentRecipientIndex in sorted order
     const nextRecipientEl = document.getElementById('next-recipient-value');
     if (isCompleted) {
         const progressBars = group.participants ? group.participants.map(function() { return '<div class="progress-bar-segment"></div>'; }).join('') : '';
         nextRecipientEl.innerHTML = '<div class="progress-indicator">' + progressBars + '</div>';
-    } else if (group.rounds && group.rounds.length > 0 && group.rounds[0].recipient) {
-        const recipientName = formatParticipantName(group.rounds[0].recipient.name);
-        nextRecipientEl.innerHTML = '<div class="next-recipient-name">' + escapeHtml(recipientName.toUpperCase()) + '</div>';
+    } else if (group.isOrderSet && group.participants && group.participants.length > 0) {
+        const sorted = group.participants.slice().sort(function(a, b) { return (a.order != null ? a.order : 999) - (b.order != null ? b.order : 999); });
+        const idx = group.currentRecipientIndex != null ? group.currentRecipientIndex : 0;
+        const currentParticipant = sorted[idx];
+        const recipientName = currentParticipant ? formatParticipantName(currentParticipant.name) : '';
+        nextRecipientEl.innerHTML = recipientName
+            ? '<div class="next-recipient-name">' + escapeHtml(recipientName.toUpperCase()) + '</div>'
+            : '<div class="question-marks">???</div>';
     } else {
         nextRecipientEl.innerHTML = '<div class="question-marks">???</div>';
     }
