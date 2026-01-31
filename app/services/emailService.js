@@ -639,35 +639,10 @@ exports.sendGroupInvitationEmail = async (participantEmail, participantName, gro
           <div class="admin-info">Added by: ${adminName}</div>
         </div>
         
-        <p>You can now:</p>
-        <ul style="color: #555; font-size: 16px; line-height: 1.8;">
-          <li>View group details and participant information</li>
-          <li>Track payments and collections</li>
-          <li>Stay updated on group activities</li>
-        </ul>
+        <p>You can now view group details, track payments, and stay updated on group activities.</p>
         
-        <div style="text-align: center; margin-top: 30px; margin-bottom: 20px;">
-          <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin: 0 auto; width: 100%; max-width: 300px;">
-            <tr>
-              <td align="center" style="background-color: #4CAF50; border-radius: 8px; padding: 0;">
-                <a href="${viewGroupUrl}" style="display: block; color: #ffffff !important; text-decoration: none !important; background-color: #4CAF50; padding: 18px 36px; border-radius: 8px; font-weight: bold; font-size: 18px; text-align: center; border: none; width: 100%; -webkit-text-size-adjust: none; mso-hide: all;">View Group</a>
-              </td>
-            </tr>
-          </table>
-        </div>
-        
-        <!-- Mobile-friendly fallback button -->
-        <div style="text-align: center; margin-top: 15px;">
-          <a href="${viewGroupUrl}" style="display: inline-block; color: #4CAF50; text-decoration: underline; font-size: 16px; padding: 10px;">Tap here to view group</a>
-        </div>
-        
-        <p style="color: #999; font-size: 14px; margin-top: 20px; text-align: center;">
-          Click the button above to view the group details.<br>
-          If the link does not work, copy and paste it into your browser.
-        </p>
-        
-        <p style="color: #666; font-size: 12px; margin-top: 20px; text-align: center;">
-          Or copy this link: <a href="${viewGroupUrl}" style="color: #4CAF50; word-break: break-all; text-decoration: underline;">${viewGroupUrl}</a>
+        <p style="color: #666; font-size: 16px; margin-top: 24px;">
+          View your group: <a href="${viewGroupUrl}" style="color: #4CAF50; word-break: break-all; text-decoration: underline;">${viewGroupUrl}</a>
         </p>
         
         <div class="footer">
