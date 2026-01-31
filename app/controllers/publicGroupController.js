@@ -27,11 +27,11 @@ async function getPublicGroupData(shareCode) {
     PaymentLog.find({ group: group._id })
       .populate('paidBy', 'name')
       .sort({ createdAt: -1 })
-      .limit(50)
+      .limit(200)
       .lean(),
     GroupActivityLog.find({ group: group._id })
       .sort({ createdAt: -1 })
-      .limit(50)
+      .limit(200)
       .lean(),
   ]);
 

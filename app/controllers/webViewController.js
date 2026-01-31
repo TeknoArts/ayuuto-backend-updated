@@ -162,6 +162,28 @@ body {
     line-height: 1.4;
 }
 
+.view-only-banner {
+    background-color: #1a2332;
+    border: 1px solid #FFD700;
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 16px;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+}
+
+.view-only-icon {
+    font-size: 16px;
+}
+
+.view-only-text {
+    color: #FFD700;
+    font-size: 13px;
+    font-weight: 600;
+}
+
 .savings-card {
     background-color: #001b3d;
     border-radius: 16px;
@@ -299,7 +321,7 @@ body {
 .payment-title {
     font-size: 18px;
     font-weight: bold;
-    color: #FFD700;
+    color: #bc9426;
     letter-spacing: 1px;
 }
 
@@ -317,7 +339,7 @@ body {
 }
 
 .participant-card-paid {
-    border-color: #90EE90;
+    border-color: #4CAF50;
 }
 
 .participant-top-row {
@@ -337,10 +359,10 @@ body {
 }
 
 .order-number {
-    width: 28px;
-    height: 28px;
-    min-width: 28px;
-    border-radius: 14px;
+    width: 24px;
+    height: 24px;
+    min-width: 24px;
+    border-radius: 6px;
     background-color: #9BA1A6;
     display: flex;
     align-items: center;
@@ -348,7 +370,7 @@ body {
 }
 
 .order-number-paid {
-    background-color: #90EE90;
+    background-color: #4CAF50;
 }
 
 .order-number-text {
@@ -366,14 +388,14 @@ body {
 }
 
 .paid-out-tag-inline {
-    background-color: #90EE90;
+    background-color: #4CAF50;
     border-radius: 6px;
     padding: 6px 12px;
     margin-left: 8px;
 }
 
 .paid-out-tag-right {
-    background-color: #90EE90;
+    background-color: #4CAF50;
     border-radius: 6px;
     padding: 6px 12px;
 }
@@ -613,6 +635,11 @@ body {
     <div id="group-content" class="group-content hidden">
         <div class="group-name-container">
             <div class="group-name" id="group-name"></div>
+        </div>
+
+        <div class="view-only-banner">
+            <span class="view-only-icon">👁</span>
+            <span class="view-only-text">Viewing shared group</span>
         </div>
 
         <div class="savings-card">
@@ -899,10 +926,10 @@ function renderLogs(logs) {
         return;
     }
     
-    container.innerHTML = '<div class="logs-list">' + logs.slice(0, 10).map(log => {
+    container.innerHTML = '<div class="logs-list">' + logs.map(log => {
         const timestamp = log.createdAt || log.paidAt;
         const dateLabel = timestamp ? new Date(timestamp).toLocaleString() : '';
-        const isActivity = log.type === 'group_created' || log.type === 'spin';
+        const isActivity = log.type === 'group_created' || log.type === 'spin' || log.type === 'update_emails';
         const participantName = log.paidBy?.name || log.paidTo?.name;
         const roundText = typeof log.roundNumber === 'number' ? \` • Round \${log.roundNumber}\` : '';
         const mainText = isActivity ? (log.description || '') : (log.description || (participantName ? (participantName + ' paid' + roundText) : ('Payment recorded' + roundText)));
