@@ -10,7 +10,7 @@ dotenv.config();
 
 const app = express();
 
-// Trust proxy (important for Railway/cloud platforms to get correct protocol)
+// Trust proxy (important for cloud platforms to get correct protocol)
 app.set('trust proxy', true);
 
 // Middleware
@@ -31,8 +31,8 @@ if (process.env.MONGODB_URI) {
   console.log('🔌 Attempting to connect to MongoDB...');
   console.log(`   URI: ${maskedUri}`);
 } else {
-  console.warn('⚠️  MONGODB_URI not set! Using default localhost (will fail on Railway)');
-  console.warn('   Please set MONGODB_URI environment variable in Railway');
+  console.warn('⚠️  MONGODB_URI not set! Using default localhost (will fail in production)');
+  console.warn('   Please set MONGODB_URI environment variable');
 }
 
 mongoose
@@ -66,7 +66,7 @@ mongoose
       console.error('\n🌐 IP Whitelist Error!');
       console.error('   - Go to MongoDB Atlas → Network Access');
       console.error('   - Add IP: 0.0.0.0/0 (allows all IPs)');
-      console.error('   - Or add Railway\'s IP addresses');
+      console.error('   - Or add your server\'s IP addresses');
     } else if (err.message.includes('timeout') || err.message.includes('ENOTFOUND')) {
       console.error('\n⏱️  Connection Timeout!');
       console.error('   - Check MongoDB Atlas cluster is running');
@@ -74,15 +74,15 @@ mongoose
       console.error('   - Check network connectivity');
     } else if (!process.env.MONGODB_URI) {
       console.error('\n⚠️  MONGODB_URI Not Set!');
-      console.error('   - Set MONGODB_URI environment variable in Railway');
+      console.error('   - Set MONGODB_URI environment variable');
       console.error('   - Format: mongodb+srv://username:password@cluster.mongodb.net/ayuuto');
     }
     
     console.error('\n💡 Troubleshooting:');
-    console.error('   1. Check Railway Dashboard → Variables → MONGODB_URI');
+    console.error('   1. Check MONGODB_URI environment variable');
     console.error('   2. Verify MongoDB Atlas → Network Access → IP Whitelist');
     console.error('   3. Test connection string in MongoDB Atlas');
-    console.error('   4. Check Railway logs for more details\n');
+    console.error('   4. Check server logs for more details\n');
     
     process.exit(1);
   });
@@ -94,6 +94,7 @@ const userRoutes = require('./app/routes/userRoutes');
 const publicRoutes = require('./app/routes/publicRoutes');
 const inviteRoutes = require('./app/routes/inviteRoutes');
 const webViewController = require('./app/controllers/webViewController');
+const privacyPolicyController = require('./app/controllers/privacyPolicyController');
 
 // Base API routes
 app.use('/api/auth', authRoutes);
@@ -108,6 +109,36 @@ app.use('/invite', inviteRoutes);
 // Web view route (for shareable links) - uses shareCode, no token in URL
 app.get('/view/:shareCode', webViewController.serveGroupView);
 
+// Redirect /view-group/:groupId to /view/:shareCode (for old emails that used groupId)
+app.get('/view-group/:groupId', async (req, res) => {
+  try {
+    const Group = require('./app/models/Group');
+    const group = await Group.findById(req.params.groupId).select('shareCode').lean();
+    const baseUrl = process.env.WEB_VIEW_BASE_URL || process.env.BACKEND_URL || 'http://104.248.117.205';
+    const urlBase = String(baseUrl).replace(/\/$/, '');
+    if (group && group.shareCode) {
+      return res.redirect(302, `${urlBase}/view/${group.shareCode}`);
+    }
+    res.redirect(302, urlBase);
+  } catch {
+    const urlBase = (process.env.WEB_VIEW_BASE_URL || process.env.BACKEND_URL || 'http://104.248.117.205').replace(/\/$/, '');
+    res.redirect(302, urlBase);
+  }
+});
+
+// Privacy Policy public page
+app.get('/privacy-policy', privacyPolicyController.servePrivacyPolicy);
+
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: 'Ayuuto Backend API is running',
+    timestamp: new Date().toISOString(),
+    database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+  });
+});
+
 // Root route - helpful message
 app.get('/', (req, res) => {
   res.status(200).json({
@@ -115,10 +146,12 @@ app.get('/', (req, res) => {
     message: 'Ayuuto Backend API is running',
     endpoints: {
       api: '/api',
+      health: '/api/health',
       viewGroup: '/view/:shareCode',
-      invite: '/invite/:groupId'
+      invite: '/invite/:groupId',
+      privacyPolicy: '/privacy-policy'
     },
-    note: 'Use /view/{shareCode} to view a group, or /invite/{groupId} for invitations'
+    note: 'Use /view/{shareCode} to view a group, /invite/{groupId} for invitations, or /privacy-policy for privacy policy'
   });
 });
 

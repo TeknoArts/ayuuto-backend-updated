@@ -1,5 +1,6 @@
 const path = require('path');
 const fs = require('fs');
+const { extractShareCode } = require('../utils/shareToken');
 
 // @desc    Serve web view HTML page
 // @route   GET /view/:shareCode
@@ -9,28 +10,24 @@ exports.serveGroupView = (req, res) => {
     // Decode shareCode in case it was URL encoded
     let { shareCode } = req.params;
     shareCode = decodeURIComponent(shareCode);
+    // Extract only the code when full share text was passed (e.g. "LJBTZQCP Shared from Ayuuto App http://.../view/LJBTZQCP")
+    shareCode = extractShareCode(shareCode);
     
     // Normalize shareCode to uppercase (share codes are stored in uppercase)
     shareCode = shareCode.toUpperCase().trim();
     
     console.log(`[WebView] Serving group view for shareCode: ${shareCode}`);
 
-    // Get the current host and protocol
-    // On Railway/cloud platforms, check X-Forwarded-Proto header (behind proxy)
+    // WebView must use DigitalOcean URL - do NOT use BACKEND_URL if it points to Railway
+    const DIGITALOCEAN_URL = 'http://104.248.117.205';
     const protocol = req.get('X-Forwarded-Proto') || req.protocol || 'https';
-    const host = req.get('host') || req.get('X-Forwarded-Host') || 'web-production-40b9d.up.railway.app';
+    const host = req.get('host') || req.get('X-Forwarded-Host') || 'localhost';
     
-    // Use BACKEND_URL if available (more reliable for production)
-    let apiBaseUrl;
-    if (process.env.BACKEND_URL) {
-      apiBaseUrl = `${process.env.BACKEND_URL}/api/public`;
-    } else if (process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_SERVICE_NAME) {
-      // On Railway, always use HTTPS
-      apiBaseUrl = `https://${host}/api/public`;
-    } else {
-      // Development fallback
-      apiBaseUrl = `${protocol}://${host}/api/public`;
+    let baseUrl = process.env.WEB_VIEW_BASE_URL || process.env.BACKEND_URL;
+    if (!baseUrl || baseUrl.includes('railway')) {
+      baseUrl = DIGITALOCEAN_URL;
     }
+    const apiBaseUrl = `${String(baseUrl).replace(/\/$/, '')}/api/public`;
     
     console.log(`[WebView] API Base URL: ${apiBaseUrl}`);
 
@@ -117,8 +114,16 @@ body {
 }
 
 .error-message {
-    color: rgba(255, 255, 255, 0.7);
+    color: rgba(255, 255, 255, 0.9);
+    margin-bottom: 12px;
+    font-weight: 500;
+}
+
+.error-hint {
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 14px;
     margin-bottom: 24px;
+    line-height: 1.4;
 }
 
 .error button {
@@ -141,6 +146,8 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
+    flex-wrap: wrap;
+    gap: 12px;
     margin-bottom: 24px;
     padding: 0 20px;
 }
@@ -153,6 +160,24 @@ body {
     text-align: center;
     text-transform: uppercase;
     line-height: 1.4;
+}
+
+.view-only-banner {
+    background-color: #1a2332;
+    border: 1px solid #FFD700;
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 16px;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+}
+
+.view-only-text {
+    color: #FFD700;
+    font-size: 13px;
+    font-weight: 600;
 }
 
 .savings-card {
@@ -176,18 +201,6 @@ body {
     font-weight: bold;
     color: #FFD700;
     letter-spacing: 1px;
-}
-
-.admin-badge {
-    background-color: #002452;
-    padding: 6px 12px;
-    border-radius: 12px;
-}
-
-.admin-text {
-    color: #FFFFFF;
-    font-size: 12px;
-    font-weight: bold;
 }
 
 .completed-badge {
@@ -288,6 +301,7 @@ body {
     letter-spacing: 0.5px;
 }
 
+
 .payment-section {
     margin-top: 8px;
 }
@@ -343,6 +357,7 @@ body {
 .order-number {
     width: 24px;
     height: 24px;
+    min-width: 24px;
     border-radius: 6px;
     background-color: #9BA1A6;
     display: flex;
@@ -371,8 +386,14 @@ body {
 .paid-out-tag-inline {
     background-color: #4CAF50;
     border-radius: 6px;
-    padding: 4px 8px;
+    padding: 6px 12px;
     margin-left: 8px;
+}
+
+.paid-out-tag-right {
+    background-color: #4CAF50;
+    border-radius: 6px;
+    padding: 6px 12px;
 }
 
 .paid-out-text-inline {
@@ -436,7 +457,7 @@ body {
 .logs-title {
     font-size: 16px;
     font-weight: bold;
-    color: #bc9426;
+    color: #FFD700;
     letter-spacing: 1px;
 }
 
@@ -526,12 +547,21 @@ body {
     color: #FFD700;
 }
 
-.completion-title {
-    font-size: 32px;
+.completion-title-ayuuto {
+    font-size: 24px;
+    font-weight: bold;
+    color: #FFFFFF;
+    letter-spacing: 2px;
+    margin-top: 16px;
+    text-align: center;
+}
+
+.completion-title-completed {
+    font-size: 28px;
     font-weight: bold;
     color: #4CAF50;
     letter-spacing: 2px;
-    margin-top: 16px;
+    margin-top: 4px;
     margin-bottom: 12px;
     text-align: center;
 }
@@ -542,6 +572,29 @@ body {
     text-align: center;
     letter-spacing: 0.5px;
     line-height: 24px;
+}
+
+.open-in-app-container {
+    margin-top: 24px;
+    margin-bottom: 20px;
+    display: flex;
+    justify-content: center;
+}
+
+.open-in-app-btn {
+    background-color: #FFD700;
+    color: #011b3d;
+    border: none;
+    border-radius: 12px;
+    padding: 14px 24px;
+    font-size: 16px;
+    font-weight: bold;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+}
+
+.open-in-app-btn:hover {
+    opacity: 0.9;
 }
 
 @media (max-width: 600px) {
@@ -571,12 +624,17 @@ body {
         <div class="error-icon">⚠️</div>
         <h2>Unable to Load Group</h2>
         <p class="error-message" id="error-message"></p>
+        <p class="error-hint">The share code may be invalid, sharing may be disabled for this group, or the link may have expired. Ask the group admin to send a new share link.</p>
         <button onclick="location.reload()">Try Again</button>
     </div>
 
     <div id="group-content" class="group-content hidden">
         <div class="group-name-container">
             <div class="group-name" id="group-name"></div>
+        </div>
+
+        <div class="view-only-banner">
+            <span class="view-only-text">Viewing shared group</span>
         </div>
 
         <div class="savings-card">
@@ -611,6 +669,15 @@ body {
             <div class="participants-list" id="participants-list"></div>
         </div>
 
+        <div id="completion-card" class="completion-card hidden">
+            <svg class="completion-icon" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M19 5h-2V3H7v2H5c-1.1 0-2 .9-2 2v1c0 2.55 1.92 4.63 4.39 4.94.63 1.5 1.98 2.63 3.61 2.96V19H7v2h10v-2h-4v-3.1c1.63-.33 2.98-1.46 3.61-2.96C19.08 12.63 21 10.55 21 8V7c0-1.1-.9-2-2-2zM5 8V7h2v3.82C5.84 10.4 5 9.3 5 8zm14 0c0 1.3-.84 2.4-2 2.82V7h2v1z"/>
+            </svg>
+            <div class="completion-title-ayuuto">AYUUTO</div>
+            <div class="completion-title-completed">COMPLETED</div>
+            <div class="completion-message">ALL MEMBERS HAVE BEEN PAID OUT SAFELY</div>
+        </div>
+
         <div class="logs-section">
             <div class="logs-header">
                 <div class="logs-title">GROUP ACTIVITY</div>
@@ -618,17 +685,16 @@ body {
             <div id="logs-container"></div>
         </div>
 
-        <div id="completion-card" class="completion-card hidden">
-            <svg class="completion-icon" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-            </svg>
-            <div class="completion-title">AYUUTO COMPLETED</div>
-            <div class="completion-message">All members have been paid out</div>
+        <div id="open-in-app-container" class="open-in-app-container hidden">
+            <button type="button" id="open-in-app-btn" class="open-in-app-btn">Open in Ayuuto App</button>
         </div>
     </div>
 
     <script>
-const API_BASE_URL = '${apiBaseUrl}';
+// Use same origin as the page so fetch works (avoids wrong protocol/host from proxy)
+const API_BASE_URL = (typeof window !== 'undefined' && window.location && window.location.origin)
+  ? window.location.origin + '/api/public'
+  : '${apiBaseUrl}';
 const shareCode = '${shareCode}';
 let groupId = null;
 let deepLinkAttempted = false;
@@ -663,12 +729,8 @@ async function loadGroup() {
             throw new Error('Share code is missing. Please check the share link.');
         }
         
-        // Use shareCode instead of token - no token in URL
-        // URL encode the shareCode to handle special characters
         const encodedShareCode = encodeURIComponent(shareCode);
-        // Add timestamp to prevent browser caching
-        const timestamp = new Date().getTime();
-        const apiUrl = \`\${API_BASE_URL}/groups/view/\${encodedShareCode}?_t=\${timestamp}\`;
+        const apiUrl = \`\${API_BASE_URL}/groups/view/\${encodedShareCode}?t=\${Date.now()}\`;
         
         console.log('Loading group with shareCode:', shareCode);
         console.log('API URL:', apiUrl);
@@ -702,16 +764,14 @@ async function loadGroup() {
             throw new Error('Invalid response from server');
         }
         
-        // Store groupId for deep linking
+        // Store groupId for deep linking (user can tap "Open in App" instead of auto-redirect)
         if (data.data.group && data.data.group.id) {
             groupId = data.data.group.id;
-            // Try to deep link to app (will show web view if app not installed)
-            tryDeepLink();
         }
         
-        // Render the group view (will show if app doesn't open)
         renderGroup(data.data.group);
         hideLoading();
+        if (document.visibilityState === 'visible') startRealtime();
     } catch (error) {
         console.error('Error loading group:', error);
         showError(error.message || 'Failed to load group. Please check the link and try again.');
@@ -730,8 +790,14 @@ function formatParticipantName(name) {
 }
 
 function renderGroup(group) {
+    if (!group) return;
+    // Single source of truth for completion (API sends isCompleted/status; participants may have hasReceivedPayment hidden by share settings)
+    const isCompleted = group.isCompleted === true ||
+        (group.status && String(group.status) === 'COMPLETED') ||
+        (group.participants && group.participants.length > 0 && group.participants.every(function(p) { return p.hasReceivedPayment === true; }));
+    
     // Group name
-    document.getElementById('group-name').textContent = group.name.toUpperCase();
+    document.getElementById('group-name').textContent = (group.name || '').toUpperCase();
     
     // Calculate total savings
     const totalSavings = group.amountPerPerson && group.memberCount 
@@ -739,34 +805,38 @@ function renderGroup(group) {
         : 0;
     document.getElementById('amount-text').textContent = totalSavings.toString();
     
-    // Badge (admin or completed)
+    // Badge (completed only)
     const badgeContainer = document.getElementById('badge-container');
-    const allPaidOut = group.participants && group.participants.every(p => p.hasReceivedPayment === true);
-    if (allPaidOut) {
+    if (isCompleted) {
         badgeContainer.innerHTML = '<div class="completed-badge"><div class="completed-text">COMPLETED</div></div>';
     } else {
-        badgeContainer.innerHTML = '<div class="admin-badge"><div class="admin-text">ADMIN</div></div>';
+        badgeContainer.innerHTML = '';
     }
     
-    // Next recipient
+    // Next recipient - use same logic as app: participant at currentRecipientIndex in sorted order
     const nextRecipientEl = document.getElementById('next-recipient-value');
-    if (allPaidOut) {
-        const progressBars = group.participants ? group.participants.map(() => '<div class="progress-bar-segment"></div>').join('') : '';
+    if (isCompleted) {
+        const progressBars = group.participants ? group.participants.map(function() { return '<div class="progress-bar-segment"></div>'; }).join('') : '';
         nextRecipientEl.innerHTML = '<div class="progress-indicator">' + progressBars + '</div>';
-    } else if (group.rounds && group.rounds.length > 0 && group.rounds[0].recipient) {
-        const recipientName = formatParticipantName(group.rounds[0].recipient.name);
-        nextRecipientEl.innerHTML = '<div class="next-recipient-name">' + escapeHtml(recipientName.toUpperCase()) + '</div>';
+    } else if (group.isOrderSet && group.participants && group.participants.length > 0) {
+        const sorted = group.participants.slice().sort(function(a, b) { return (a.order != null ? a.order : 999) - (b.order != null ? b.order : 999); });
+        const idx = group.currentRecipientIndex != null ? group.currentRecipientIndex : 0;
+        const currentParticipant = sorted[idx];
+        const recipientName = currentParticipant ? formatParticipantName(currentParticipant.name) : '';
+        nextRecipientEl.innerHTML = recipientName
+            ? '<div class="next-recipient-name">' + escapeHtml(recipientName.toUpperCase()) + '</div>'
+            : '<div class="question-marks">???</div>';
     } else {
         nextRecipientEl.innerHTML = '<div class="question-marks">???</div>';
     }
     
     // Collection day
     const collectionDay = group.collectionDate || 2;
-    document.getElementById('collection-day').textContent = 'COLLECTION DAY ' + collectionDay;
+    document.getElementById('collection-day').textContent = 'COLLECTION DAY: ' + collectionDay;
     
-    // Participants
+    // Participants (pass isCompleted so PAID OUT shows even when share settings hide hasReceivedPayment)
     if (group.participants && group.participants.length > 0) {
-        renderParticipants(group.participants, group);
+        renderParticipants(group.participants, group, isCompleted);
     }
     
     // Activity logs
@@ -776,46 +846,59 @@ function renderGroup(group) {
         document.getElementById('logs-container').innerHTML = '<div class="logs-empty-state"><div class="logs-empty-text">No activity yet</div></div>';
     }
     
-    // Completion card
-    if (allPaidOut) {
-        document.getElementById('completion-card').classList.remove('hidden');
+    // Completion card - show "AYUUTO COMPLETED" when group is completed; hide when not
+    const completionCard = document.getElementById('completion-card');
+    if (isCompleted) {
+        completionCard.classList.remove('hidden');
+    } else {
+        completionCard.classList.add('hidden');
+    }
+    
+    // Show "Open in App" only on mobile when we have groupId
+    const openInAppEl = document.getElementById('open-in-app-container');
+    const ua = navigator.userAgent || navigator.vendor || '';
+    const isMobile = /iPad|iPhone|iPod|android/i.test(ua);
+    if (openInAppEl) {
+        if (groupId && isMobile) {
+            openInAppEl.classList.remove('hidden');
+        } else {
+            openInAppEl.classList.add('hidden');
+        }
     }
     
     document.getElementById('group-content').classList.remove('hidden');
 }
 
-function renderParticipants(participants, group) {
+function renderParticipants(participants, group, isGroupCompleted) {
     const sorted = group.isOrderSet 
-        ? [...participants].sort((a, b) => (a.order || 0) - (b.order || 0))
+        ? participants.slice().sort(function(a, b) { return (a.order != null ? a.order : 999) - (b.order != null ? b.order : 999); })
         : participants;
     
-    const currentRecipientIndex = group.currentRecipientIndex || 0;
-    const allPaidOut = participants.every(p => p.hasReceivedPayment === true);
+    const currentRecipientIndex = group.currentRecipientIndex != null ? group.currentRecipientIndex : 0;
     
     const list = document.getElementById('participants-list');
-    list.innerHTML = sorted.map((p, index) => {
+    list.innerHTML = sorted.map(function(p, index) {
         const isFirst = index === currentRecipientIndex && group.isOrderSet;
         const isPaid = p.isPaid === true;
         const hasReceivedPayment = p.hasReceivedPayment === true;
-        const paidClass = (isFirst || isPaid || allPaidOut) ? 'participant-card-paid' : '';
+        const paidClass = hasReceivedPayment ? 'participant-card-paid' : '';
         
-        let orderNumberHtml = '';
-        if (group.isOrderSet && p.order !== null && p.order !== undefined) {
-            const orderPaidClass = (isFirst || isPaid || allPaidOut) ? 'order-number-paid' : '';
-            orderNumberHtml = \`<div class="order-number \${orderPaidClass}"><div class="order-number-text">\${p.order + 1}</div></div>\`;
-        }
+        // Serial number: only show after spin (when isOrderSet) - like app
+        const serialNum = (p.order !== null && p.order !== undefined) ? p.order : (index + 1);
+        const orderPaidClass = hasReceivedPayment ? 'order-number-paid' : '';
+        const orderNumberHtml = group.isOrderSet
+            ? '<div class="order-number ' + orderPaidClass + '"><div class="order-number-text">' + serialNum + '</div></div>'
+            : '';
         
-        let paidOutTag = '';
+        // PAID OUT badge only for participants who have received payment
+        let rightHtml = '';
         if (hasReceivedPayment) {
-            paidOutTag = '<div class="paid-out-tag-inline"><div class="paid-out-text-inline">PAID OUT</div></div>';
-        }
-        
-        let statusHtml = '';
-        if (group.isOrderSet && !isFirst) {
+            rightHtml = '<div class="paid-out-tag-right"><div class="paid-out-text-inline">PAID OUT</div></div>';
+        } else if (group.isOrderSet) {
             if (isPaid) {
-                statusHtml = '<div class="payment-status-container"><div class="paid-status">PAID</div></div>';
+                rightHtml = '<div class="payment-status-container"><div class="paid-status">PAID</div></div>';
             } else {
-                statusHtml = '<div class="payment-status-container"><div class="payment-status">UNPAID</div></div>';
+                rightHtml = '<div class="payment-status-container"><div class="payment-status">UNPAID</div></div>';
             }
         }
         
@@ -825,9 +908,8 @@ function renderParticipants(participants, group) {
                     <div class="participant-left">
                         \${orderNumberHtml}
                         <div class="participant-name">\${escapeHtml(formatParticipantName(p.name))}</div>
-                        \${paidOutTag}
                     </div>
-                    \${statusHtml}
+                    \${rightHtml}
                 </div>
             </div>
         \`;
@@ -841,12 +923,14 @@ function renderLogs(logs) {
         return;
     }
     
-    container.innerHTML = '<div class="logs-list">' + logs.slice(0, 3).map(log => {
+    container.innerHTML = '<div class="logs-list">' + logs.map(log => {
         const timestamp = log.createdAt || log.paidAt;
         const dateLabel = timestamp ? new Date(timestamp).toLocaleString() : '';
-        const participantName = log.paidBy?.name || log.paidTo?.name || 'Unknown';
+        const isActivity = log.type === 'group_created' || log.type === 'spin' || log.type === 'update_emails';
+        const participantName = log.paidBy?.name || log.paidTo?.name;
         const roundText = typeof log.roundNumber === 'number' ? \` • Round \${log.roundNumber}\` : '';
-        const amountText = typeof log.amount === 'number' && log.amount > 0 ? \`<div class="log-sub-text">Amount: $\${log.amount}</div>\` : '';
+        const mainText = isActivity ? (log.description || '') : (log.description || (participantName ? (participantName + ' paid' + roundText) : ('Payment recorded' + roundText)));
+        const amountText = !isActivity && typeof log.amount === 'number' && log.amount > 0 ? \`<div class="log-sub-text">Amount: $\${log.amount}</div>\` : '';
         
         return \`
             <div class="log-item">
@@ -857,7 +941,7 @@ function renderLogs(logs) {
                         </svg>
                     </div>
                     <div class="log-text-container">
-                        <div class="log-main-text">\${escapeHtml(participantName)} paid\${roundText}</div>
+                        <div class="log-main-text">\${escapeHtml(mainText)}</div>
                         \${amountText}
                     </div>
                 </div>
@@ -891,6 +975,74 @@ function showError(message) {
 }
 
 
+// SSE (Server-Sent Events) - real-time updates, no polling
+var sseSource = null;
+var sseReconnectDelay = 2000;
+var sseReconnectTimer = null;
+
+function startRealtime() {
+    if (!shareCode) return;
+    stopRealtime();
+    var streamUrl = API_BASE_URL + '/groups/view/' + encodeURIComponent(shareCode) + '/stream';
+    try {
+        sseSource = new EventSource(streamUrl);
+        sseSource.addEventListener('group_update', function(e) {
+            try {
+                var parsed = JSON.parse(e.data);
+                if (parsed && parsed.group) renderGroup(parsed.group);
+            } catch (err) {
+                console.error('SSE: Failed to parse group_update:', err);
+            }
+        });
+        sseSource.onerror = function() {
+            sseSource.close();
+            sseSource = null;
+            if (document.visibilityState === 'visible') {
+                sseReconnectTimer = setTimeout(function() {
+                    startRealtime();
+                }, sseReconnectDelay);
+            }
+        };
+    } catch (err) {
+        console.error('SSE: Failed to connect:', err);
+        if (document.visibilityState === 'visible') {
+            sseReconnectTimer = setTimeout(function() {
+                startRealtime();
+            }, sseReconnectDelay);
+        }
+    }
+}
+
+function stopRealtime() {
+    if (sseReconnectTimer) {
+        clearTimeout(sseReconnectTimer);
+        sseReconnectTimer = null;
+    }
+    if (sseSource) {
+        sseSource.close();
+        sseSource = null;
+    }
+}
+
+document.addEventListener('visibilitychange', function() {
+    if (document.visibilityState === 'visible' && shareCode) {
+        loadGroup();
+        startRealtime();
+    } else {
+        stopRealtime();
+    }
+});
+window.addEventListener('pageshow', function(e) {
+    if (e.persisted && shareCode) loadGroup();
+    if (document.visibilityState === 'visible' && shareCode) startRealtime();
+});
+
+document.addEventListener('click', (e) => {
+    if (e.target && e.target.id === 'open-in-app-btn') {
+        tryDeepLink();
+    }
+});
+
 // Wait for DOM to be ready
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
@@ -911,13 +1063,13 @@ if (document.readyState === 'loading') {
 </body>
 </html>`;
 
-    // Disable caching for HTML page - data changes frequently (payments, status, participants)
+    // Disable all caching for HTML page - shared link must always show fresh data
     res.set({
       'Content-Type': 'text/html',
-      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Cache-Control': 'private, no-cache, no-store, must-revalidate, max-age=0',
       'Pragma': 'no-cache',
       'Expires': '0',
-      'ETag': false, // Disable ETag to prevent 304 responses
+      'Surrogate-Control': 'no-store',
     });
     res.send(html);
   } catch (err) {

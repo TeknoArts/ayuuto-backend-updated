@@ -1,22 +1,103 @@
 const Group = require('../models/Group');
 const Round = require('../models/Round');
 const PaymentLog = require('../models/PaymentLog');
+const GroupActivityLog = require('../models/GroupActivityLog');
 const User = require('../models/User');
 const notificationService = require('../services/notificationService');
 const { sendGroupInvitationEmail } = require('../services/emailService');
+const { getPublicGroupData } = require('./publicGroupController');
+const sseService = require('../services/sseService');
 
-// @desc    Create a new group
+// @desc    Create a new group with participants and details (simplified flow)
 // @route   POST /api/groups
 // @access  Private
 exports.createGroup = async (req, res, next) => {
   try {
-    const { name, memberCount } = req.body;
+    const { name, memberCount, participants, amountPerPerson, collectionDate } = req.body;
     const userId = req.user.id;
 
-    if (!name || !memberCount) {
+    // Validate required fields
+    if (!name) {
       return res.status(400).json({
         success: false,
-        message: 'Group name and member count are required',
+        message: 'Group name is required',
+      });
+    }
+
+    // If full group creation (with participants and details)
+    if (participants && Array.isArray(participants) && participants.length >= 2) {
+      // Validate amount and collection date if provided
+      if (amountPerPerson && amountPerPerson > 0) {
+        const dateNum = parseInt(collectionDate);
+        if (!dateNum || dateNum < 1 || dateNum > 31) {
+          return res.status(400).json({
+            success: false,
+            message: 'Collection date must be between 1 and 31',
+          });
+        }
+      }
+
+      // Create group with all details
+      const group = await Group.create({
+        name,
+        memberCount: participants.length,
+        createdBy: userId,
+        participants: participants.map(p => ({
+          name: p.name || p.email || 'Participant',
+          email: p.email || null,
+          order: null,
+          isPaid: false,
+          hasReceivedPayment: false,
+        })),
+        amountPerPerson: amountPerPerson || 0,
+        frequency: 'MONTHLY',
+        collectionDate: collectionDate ? parseInt(collectionDate) : 1,
+        isOrderSet: false,
+      });
+
+      // Log group creation
+      await GroupActivityLog.create({
+        group: group._id,
+        type: 'group_created',
+        createdBy: userId,
+      });
+
+      // Return full group details
+      const totalSavings = (amountPerPerson || 0) * participants.length;
+      
+      return res.status(201).json({
+        success: true,
+        data: {
+          group: {
+            id: group._id,
+            name: group.name,
+            memberCount: group.memberCount,
+            participants: group.participants.map(p => ({
+              id: p._id,
+              name: p.name,
+              email: p.email,
+              order: p.order,
+              isPaid: p.isPaid,
+              hasReceivedPayment: p.hasReceivedPayment,
+            })),
+            amountPerPerson: group.amountPerPerson,
+            frequency: group.frequency,
+            collectionDate: group.collectionDate,
+            totalSavings: totalSavings,
+            isOrderSet: group.isOrderSet,
+            currentRecipientIndex: group.currentRecipientIndex,
+            status: group.status,
+            createdAt: group.createdAt,
+          },
+        },
+      });
+    }
+
+    // Legacy support: Simple group creation (backwards compatibility)
+    if (!memberCount) {
+      return res.status(400).json({
+        success: false,
+        message: 'Member count or participants array is required',
       });
     }
 
@@ -25,6 +106,12 @@ exports.createGroup = async (req, res, next) => {
       memberCount,
       createdBy: userId,
       participants: [],
+    });
+
+    await GroupActivityLog.create({
+      group: group._id,
+      type: 'group_created',
+      createdBy: userId,
     });
 
     res.status(201).json({
@@ -531,6 +618,7 @@ exports.getGroupDetails = async (req, res, next) => {
   try {
     const { groupId } = req.params;
 
+    // First, fetch the group to check authorization
     const group = await Group.findById(groupId)
       .populate('createdBy', 'name email')
       .populate('participants.user', 'name email');
@@ -542,26 +630,149 @@ exports.getGroupDetails = async (req, res, next) => {
       });
     }
 
-    // Check if user is authorized (owner or participant)
-    const isOwner = group.createdBy && group.createdBy._id && group.createdBy._id.toString() === req.user.id;
-    const isParticipant = group.participants.some((p) => {
-      const byUserId = p.user && p.user.toString() === req.user.id;
-      const byName =
-        typeof p.name === 'string' &&
-        typeof req.user.name === 'string' &&
-        p.name.toLowerCase() === req.user.name.toLowerCase();
-      return byUserId || byName;
-    });
+    // Get raw group data for authorization checks
+    const rawGroup = await Group.findById(groupId).lean();
+    const groupObj = rawGroup || {};
+
+    // Check if user is owner
+    const isOwner = groupObj.createdBy && groupObj.createdBy.toString() === req.user.id;
+
+    // Ensure user email is available - fetch fresh from database if needed
+    let userEmail = req.user.email ? req.user.email.toLowerCase().trim() : null;
+    const userName = req.user.name ? req.user.name.toLowerCase().trim() : null;
+    
+    // If email is missing, try to fetch it from database
+    if (!userEmail && req.user.id) {
+      console.log(`[AUTH] ⚠️  User email not in req.user, fetching from database...`);
+      try {
+        const freshUser = await User.findById(req.user.id).select('email name');
+        if (freshUser && freshUser.email) {
+          userEmail = freshUser.email.toLowerCase().trim();
+          req.user.email = freshUser.email; // Update req.user for future checks
+          console.log(`[AUTH] ✅ Fetched user email from database: "${userEmail}"`);
+        } else {
+          console.log(`[AUTH] ❌ User email not found in database for user ID: ${req.user.id}`);
+        }
+      } catch (userFetchError) {
+        console.error(`[AUTH] ❌ Error fetching user email:`, userFetchError);
+      }
+    }
+    
+    console.log(`[AUTH] Authorization check - User email: "${userEmail || 'N/A'}", User name: "${userName || 'N/A'}", User ID: "${req.user.id}"`);
+    
+    let isParticipant = false;
+    if (groupObj.participants && Array.isArray(groupObj.participants)) {
+      console.log(`[AUTH] Checking ${groupObj.participants.length} participant(s)...`);
+      
+      isParticipant = groupObj.participants.some((p, index) => {
+        console.log(`[AUTH]   Participant ${index + 1}: name="${p.name}", email="${p.email || 'NO EMAIL'}", userId="${p.user ? String(p.user) : 'NO USER'}"`);
+        
+        // Check by userId
+        if (p.user && String(p.user) === req.user.id) {
+          console.log(`[AUTH]     ✅ MATCH by userId: "${String(p.user)}" === "${req.user.id}"`);
+          return true;
+        }
+        
+        // Check by email (case-insensitive, exact match)
+        if (userEmail && p.email) {
+          const participantEmail = String(p.email).toLowerCase().trim();
+          console.log(`[AUTH]     Comparing emails: "${participantEmail}" === "${userEmail}"`);
+          if (participantEmail === userEmail) {
+            console.log(`[AUTH]     ✅ MATCH by email!`);
+            return true;
+          } else {
+            console.log(`[AUTH]     ❌ Email mismatch`);
+          }
+        } else {
+          if (!userEmail) {
+            console.log(`[AUTH]     ⚠️  User has no email to compare`);
+          }
+          if (!p.email) {
+            console.log(`[AUTH]     ⚠️  Participant has no email to compare`);
+          }
+        }
+        
+        // Check by name (case-insensitive, exact match)
+        if (userName && p.name) {
+          const participantName = String(p.name).toLowerCase().trim();
+          console.log(`[AUTH]     Comparing names: "${participantName}" === "${userName}"`);
+          if (participantName === userName) {
+            console.log(`[AUTH]     ✅ MATCH by name!`);
+            return true;
+          } else {
+            console.log(`[AUTH]     ❌ Name mismatch`);
+          }
+        }
+        
+        console.log(`[AUTH]     ❌ No match for this participant`);
+        return false;
+      });
+      
+      console.log(`[AUTH] Final participant check result: ${isParticipant ? 'MATCHED' : 'NO MATCH'}`);
+    } else {
+      console.log(`[AUTH] ⚠️  No participants array found in group`);
+    }
+
+    
+    // Debug logging for authorization
+    console.log(`[AUTH] ==========================================`);
+    console.log(`[AUTH] Checking authorization for group: ${groupId}`);
+    console.log(`[AUTH] User ID: ${req.user.id}`);
+    console.log(`[AUTH] User Email: ${req.user.email || 'N/A'}`);
+    console.log(`[AUTH] User Name: ${req.user.name || 'N/A'}`);
+    console.log(`[AUTH] Is owner (MongoDB query): ${isOwner}`);
+    console.log(`[AUTH] Is participant (MongoDB query): ${isParticipant}`);
+    
+    // Log all participant emails for debugging - using raw data
+    if (groupObj.participants && groupObj.participants.length > 0) {
+      console.log(`[AUTH] All participants (raw):`, JSON.stringify(groupObj.participants.map(p => ({
+        name: p.name,
+        email: p.email || 'NO EMAIL',
+        emailType: typeof p.email,
+        userId: p.user ? p.user.toString() : 'NO USER',
+        userType: typeof p.user,
+        allKeys: Object.keys(p).join(', ')
+      })), null, 2));
+    } else {
+      console.log(`[AUTH] ⚠️  No participants found in group!`);
+    }
 
     if (!isOwner && !isParticipant) {
+      console.log(`[AUTH] ❌ Authorization failed - user is neither owner nor participant`);
+      console.log(`[AUTH] Final check - User email: "${req.user.email || 'N/A'}", User ID: "${req.user.id}"`);
+      console.log(`[AUTH] Group participants count: ${groupObj.participants ? groupObj.participants.length : 0}`);
+      console.log(`[AUTH] Group createdBy: ${groupObj.createdBy}`);
+      
+      // Additional diagnostic: Check if email exists in any participant
+      if (userEmail && groupObj.participants) {
+        const matchingParticipant = groupObj.participants.find(p => {
+          const pEmail = p.email ? String(p.email).toLowerCase().trim() : null;
+          return pEmail === userEmail;
+        });
+        console.log(`[AUTH] Direct email match in participants:`, matchingParticipant ? 'YES' : 'NO');
+        if (matchingParticipant) {
+          console.log(`[AUTH] Matching participant details:`, JSON.stringify({
+            name: matchingParticipant.name,
+            email: matchingParticipant.email,
+            userId: matchingParticipant.user
+          }));
+        } else {
+          console.log(`[AUTH] ⚠️  Email "${userEmail}" not found in any participant`);
+          console.log(`[AUTH] Available participant emails:`, groupObj.participants.map(p => p.email || 'NO EMAIL').join(', '));
+        }
+      }
+      
       return res.status(403).json({
         success: false,
         message: 'Not authorized to view this group',
       });
     }
+    
+    console.log(`[AUTH] ✅ Authorization successful`);
 
     // Sort participants by order if order is set
-    let sortedParticipants = [...group.participants];
+    // Use populated group for response (has user details populated)
+    let sortedParticipants = [...(group.participants || [])];
     if (group.isOrderSet) {
       sortedParticipants.sort((a, b) => {
         if (a.order === null) return 1;
@@ -571,7 +782,7 @@ exports.getGroupDetails = async (req, res, next) => {
     }
 
     const currentRecipient = group.isOrderSet && sortedParticipants.length > 0
-      ? sortedParticipants[group.currentRecipientIndex]
+      ? sortedParticipants[group.currentRecipientIndex || 0]
       : null;
 
     // Map participants to include id and populated user info (if any)
@@ -592,9 +803,13 @@ exports.getGroupDetails = async (req, res, next) => {
             }
           : null;
 
+      // Email: participant's stored email, or from populated user (for registered participants)
+      const email = p.email || (hasPopulatedUser && p.user && p.user.email) || null;
+
       return {
         id: p._id.toString(),
         name: p.name,
+        email,
         order: p.order,
         isPaid: p.isPaid,
         paidAt: p.paidAt,
@@ -725,6 +940,12 @@ exports.spinForOrder = async (req, res, next) => {
 
     const currentRound = roundDocs.find((r) => r.roundNumber === 1) || null;
 
+    await GroupActivityLog.create({
+      group: group._id,
+      type: 'spin',
+      createdBy: req.user.id,
+    });
+
     // Map participants to include id
     const participantsWithId = sortedParticipants.map((p) => ({
       id: p._id.toString(),
@@ -741,6 +962,18 @@ exports.spinForOrder = async (req, res, next) => {
       group.amountPerPerson && group.memberCount
         ? group.amountPerPerson * group.memberCount
         : 0;
+
+    // Broadcast real-time update to public group view (SSE)
+    if (group.shareCode && group.isShareable) {
+      try {
+        const groupData = await getPublicGroupData(group.shareCode);
+        if (groupData) {
+          sseService.broadcastGroupUpdate(group.shareCode, groupData);
+        }
+      } catch (broadcastErr) {
+        console.error('Error broadcasting group update:', broadcastErr);
+      }
+    }
 
     res.status(200).json({
       success: true,
@@ -779,31 +1012,41 @@ exports.spinForOrder = async (req, res, next) => {
   }
 };
 
-// @desc    Update payment status
+// @desc    Update payment status (optimized: minimal read, atomic update, respond first, then log/notify in background)
 // @route   PUT /api/groups/:groupId/participants/:participantId/payment
 // @access  Private
 exports.updatePaymentStatus = async (req, res, next) => {
   try {
     const { groupId, participantId } = req.params;
-    const { isPaid } = req.body;
+    const { isPaid, source } = req.body; // source: 'checkbox' | 'pay_now' for different notification messages
 
-    const group = await Group.findById(groupId);
-    if (!group) {
+    const isPayNow = source === 'pay_now';
+    const paidAtValue = isPaid ? new Date() : null;
+
+    // For Pay Now: load full group to possibly mark as COMPLETED when last recipient is paid
+    const groupDoc = isPayNow && isPaid
+      ? await Group.findById(groupId).select('createdBy participants amountPerPerson memberCount name shareCode isShareable currentRecipientIndex isOrderSet')
+      : await Group.findById(groupId).select('createdBy participants amountPerPerson memberCount name shareCode isShareable').lean();
+
+    if (!groupDoc) {
       return res.status(404).json({
         success: false,
         message: 'Group not found',
       });
     }
 
-    // Check if user owns the group
-    if (group.createdBy.toString() !== req.user.id) {
+    const group = groupDoc.toObject ? groupDoc.toObject() : groupDoc;
+    const createdById = group.createdBy && (group.createdBy._id ? group.createdBy._id.toString() : group.createdBy.toString());
+    if (createdById !== req.user.id) {
       return res.status(403).json({
         success: false,
         message: 'Not authorized to update payment status',
       });
     }
 
-    const participant = group.participants.id(participantId);
+    const participant = (group.participants || []).find(
+      (p) => (p._id && p._id.toString() === participantId) || p._id === participantId
+    );
     if (!participant) {
       return res.status(404).json({
         success: false,
@@ -811,63 +1054,143 @@ exports.updatePaymentStatus = async (req, res, next) => {
       });
     }
 
-    participant.isPaid = isPaid;
-    if (isPaid) {
-      participant.paidAt = new Date();
+    if (isPayNow && isPaid && groupDoc.toObject) {
+      // Pay Now: use full document to potentially mark group COMPLETED when last recipient is paid
+      const participantInDoc = groupDoc.participants.id(participantId) || groupDoc.participants.find(p => p._id.toString() === participantId);
+      if (!participantInDoc) {
+        return res.status(404).json({ success: false, message: 'Participant not found' });
+      }
+
+      const sortedParticipants = [...groupDoc.participants].sort((a, b) => {
+        if (a.order === null) return 1;
+        if (b.order === null) return -1;
+        return a.order - b.order;
+      });
+      const currentRecipientIndex = groupDoc.currentRecipientIndex ?? 0;
+      const currentRecipient = sortedParticipants[currentRecipientIndex];
+      const isCurrentRecipient = currentRecipient && currentRecipient._id.toString() === participantId;
+
+      if (isCurrentRecipient) {
+        // Pay Now for current recipient: mark as paid and received payout
+        participantInDoc.isPaid = true;
+        participantInDoc.paidAt = paidAtValue;
+        participantInDoc.hasReceivedPayment = true;
+        participantInDoc.receivedPaymentAt = paidAtValue;
+
+        // Check if all participants have now received payment (group complete)
+        const allNowPaidOut = groupDoc.participants.every(p => p.hasReceivedPayment === true);
+        if (allNowPaidOut) {
+          groupDoc.status = 'COMPLETED';
+        }
+      } else {
+        participantInDoc.isPaid = true;
+        participantInDoc.paidAt = paidAtValue;
+      }
+
+      await groupDoc.save();
+
+      // If completed, mark current round as COMPLETED
+      if (groupDoc.status === 'COMPLETED') {
+        const currentRound = await Round.findOne({ group: groupId, status: 'IN_PROGRESS' });
+        if (currentRound) {
+          currentRound.status = 'COMPLETED';
+          currentRound.completedAt = paidAtValue;
+          await currentRound.save();
+        }
+      }
     } else {
-      participant.paidAt = null;
+      // Checkbox or Pay Now with lean: use atomic update
+      const result = await Group.updateOne(
+        { _id: groupId, 'participants._id': participant._id },
+        { $set: { 'participants.$.isPaid': isPaid, 'participants.$.paidAt': paidAtValue } }
+      );
+      if (result.modifiedCount === 0) {
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to update payment status',
+        });
+      }
     }
 
-    await group.save();
-
+    // Create payment log BEFORE responding so app/webview refetch sees it (no race)
     if (isPaid) {
-      // Append payment log for this contribution into the current round
+      const gId = group._id;
+      const pId = participant._id;
+      const pName = participant.name || '';
+      const amountPerPerson = group.amountPerPerson || 0;
+      const memberCount = group.memberCount || 0;
+      const groupTotalAmount = amountPerPerson * memberCount;
+      const userId = req.user.id;
+      const adminName = req.user.name || req.user.email || 'Admin';
+
       try {
-        // Find the current round (prefer IN_PROGRESS, fallback to highest roundNumber)
-        let currentRound = await Round.findOne({
-          group: group._id,
-          status: 'IN_PROGRESS',
-        });
-
+        let currentRound = await Round.findOne({ group: gId, status: 'IN_PROGRESS' }).lean();
         if (!currentRound) {
-          currentRound = await Round.findOne({ group: group._id }).sort({ roundNumber: -1 });
+          currentRound = await Round.findOne({ group: gId }).sort({ roundNumber: -1 }).lean();
         }
-
         if (currentRound) {
+          const note = isPayNow
+            ? `${pName} was paid by Admin`
+            : `Admin collected the payment from ${pName}`;
+          const amount = isPayNow ? groupTotalAmount : amountPerPerson;
           await PaymentLog.create({
-            group: group._id,
+            group: gId,
             round: currentRound._id,
-            participantId: participant._id,
-            amount: group.amountPerPerson || 0,
-            paidBy: req.user.id,
+            participantId: pId,
+            amount,
+            paidBy: userId,
             method: 'OTHER',
+            note: note || undefined,
           });
         }
       } catch (logError) {
         console.error('Error creating payment log entry:', logError);
       }
 
-      // Store notification + send push to all group members when payment is marked as paid
+      // Notifications in background (do not block response)
+      setImmediate(async () => {
+        try {
+          const groupForNotify = await Group.findById(gId)
+            .populate('participants.user', '_id')
+            .populate('createdBy', '_id')
+            .select('name participants createdBy')
+            .lean();
+          if (groupForNotify) {
+            const notificationBody = isPayNow
+              ? `${pName} has been Paid by ${adminName}.`
+              : `Payment from ${pName} has been marked as Paid in ${groupForNotify.name}.`;
+            // Checkbox: do not send to group admin (who toggled). Pay Now: do not send to the participant who was paid.
+            const excludeUserId = isPayNow
+              ? (participant.user ? String(participant.user._id || participant.user) : null)
+              : userId;
+            await notificationService.sendNotificationToGroup(
+              groupForNotify,
+              'Payment Received',
+              notificationBody,
+              'payment',
+              {
+                type: 'payment',
+                participantId: pId.toString(),
+                participantName: pName,
+              },
+              excludeUserId
+            );
+          }
+        } catch (notificationError) {
+          console.error('Error sending/storing payment notification:', notificationError);
+        }
+      });
+    }
+
+    // Broadcast real-time update to public group view (SSE) - run BEFORE response so webview updates when Pay Now is clicked
+    if (group.shareCode && group.isShareable) {
       try {
-        // Populate participants.user to get user IDs for notifications
-        await group.populate('participants.user', 'name email');
-        await group.populate('createdBy', 'name email');
-        
-        await notificationService.sendNotificationToGroup(
-          group,
-          'Payment Received',
-          `${participant.name} has marked their payment as complete in ${group.name}`,
-          'payment',
-          {
-            type: 'payment',
-            participantId: participant._id.toString(),
-            participantName: participant.name,
-          },
-          participant.user ? (participant.user._id ? participant.user._id.toString() : participant.user.toString()) : null
-        );
-      } catch (notificationError) {
-        // Don't fail the request if notification fails
-        console.error('Error sending/storing payment notification:', notificationError);
+        const groupData = await getPublicGroupData(group.shareCode);
+        if (groupData) {
+          sseService.broadcastGroupUpdate(group.shareCode, groupData);
+        }
+      } catch (broadcastErr) {
+        console.error('Error broadcasting group update:', broadcastErr);
       }
     }
 
@@ -877,8 +1200,8 @@ exports.updatePaymentStatus = async (req, res, next) => {
         participant: {
           id: participant._id,
           name: participant.name,
-          isPaid: participant.isPaid,
-          paidAt: participant.paidAt,
+          isPaid: !!isPaid,
+          paidAt: paidAtValue,
         },
       },
     });
@@ -904,13 +1227,28 @@ exports.getGroupLogs = async (req, res, next) => {
 
     // Authorize: user must be owner or participant
     const isOwner = group.createdBy && group.createdBy._id && group.createdBy._id.toString() === req.user.id;
+    
+    // Debug logging for authorization
+    console.log(`[AUTH-LOGS] Checking authorization for group logs: ${groupId}`);
+    console.log(`[AUTH-LOGS] User ID: ${req.user.id}, Email: ${req.user.email || 'N/A'}`);
+    console.log(`[AUTH-LOGS] Group has ${group.participants ? group.participants.length : 0} participants`);
+    
     const isParticipant = group.participants.some((p) => {
       const byUserId = p.user && p.user.toString() === req.user.id;
       const byName =
         typeof p.name === 'string' &&
         typeof req.user.name === 'string' &&
         p.name.toLowerCase() === req.user.name.toLowerCase();
-      return byUserId || byName;
+      // Check by email if participant was added by email only (no userId)
+      // Normalize emails for comparison (trim, lowercase)
+      const participantEmail = p.email ? String(p.email).trim().toLowerCase() : null;
+      const userEmail = req.user.email ? String(req.user.email).trim().toLowerCase() : null;
+      const byEmail = participantEmail && userEmail && participantEmail === userEmail;
+      
+      console.log(`[AUTH-LOGS] Participant: name="${p.name}", email="${participantEmail || 'N/A'}", userId="${p.user || 'N/A'}"`);
+      console.log(`[AUTH-LOGS]   byUserId: ${byUserId}, byName: ${byName}, byEmail: ${byEmail}`);
+      
+      return byUserId || byName || byEmail;
     });
 
     if (!isOwner && !isParticipant) {
@@ -920,25 +1258,35 @@ exports.getGroupLogs = async (req, res, next) => {
       });
     }
 
-    // Load payment logs for group, newest first
-    const logs = await PaymentLog.find({ group: groupId })
-      .populate('round', 'roundNumber')
-      .populate('paidBy', 'name email')
-      .sort({ paidAt: -1, createdAt: -1 });
+    // Load payment logs and group activity logs (group_created, spin), merge and sort by createdAt desc
+    const [paymentLogs, activityLogs] = await Promise.all([
+      PaymentLog.find({ group: groupId })
+        .populate('round', 'roundNumber')
+        .populate('paidBy', 'name email')
+        .sort({ paidAt: -1, createdAt: -1 })
+        .lean(),
+      GroupActivityLog.find({ group: groupId })
+        .sort({ createdAt: -1 })
+        .lean(),
+    ]);
 
-    // Map participant ids to names
-    const participantNameById = new Map();
+    // Map participant ids to display names
+    const participantDisplayNameById = new Map();
     group.participants.forEach((p) => {
-      participantNameById.set(p._id.toString(), p.name);
+      let displayName = p.name;
+      if (!p.user && p.email) {
+        displayName = p.email;
+      }
+      participantDisplayNameById.set(p._id.toString(), displayName);
     });
 
-    const mappedLogs = logs.map((log) => ({
+    const paymentMapped = paymentLogs.map((log) => ({
       id: log._id.toString(),
       type: 'payment',
       groupId: group._id.toString(),
       participantId: log.participantId ? log.participantId.toString() : null,
       participantName: log.participantId
-        ? participantNameById.get(log.participantId.toString()) || null
+        ? participantDisplayNameById.get(log.participantId.toString()) || null
         : null,
       amount: log.amount,
       roundNumber: log.round && typeof log.round.roundNumber === 'number'
@@ -952,7 +1300,26 @@ exports.getGroupLogs = async (req, res, next) => {
         : null,
       paidAt: log.paidAt,
       createdAt: log.createdAt,
+      description: log.note || undefined,
     }));
+
+    const activityMapped = activityLogs.map((log) => {
+      let description = '';
+      if (log.type === 'group_created') description = 'Admin created group';
+      else if (log.type === 'spin') description = 'Spin for order was clicked';
+      else if (log.type === 'update_emails') description = 'Admin updated participant emails';
+      return {
+        id: log._id.toString(),
+        type: log.type,
+        groupId: group._id.toString(),
+        description,
+        createdAt: log.createdAt,
+      };
+    });
+
+    const mappedLogs = [...paymentMapped, ...activityMapped].sort(
+      (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+    );
 
     // Disable caching for group logs - data changes frequently
     res.set({
@@ -996,12 +1363,41 @@ exports.getUserGroups = async (req, res, next) => {
       })));
     }
 
+    // Get user email for email-based participant matching
+    const userEmail = req.user.email ? req.user.email.toLowerCase().trim() : null;
+    console.log('getUserGroups - User Email:', userEmail);
+
+    // Build query to find groups where user is owner or participant
+    // Use $elemMatch for subdocument array queries to ensure proper matching
+    const queryConditions = [
+      { createdBy: userId },
+      { 'participants.user': userId },
+    ];
+    
+    // Add name-based matching using $elemMatch
+    if (userName) {
+      queryConditions.push({
+        'participants': {
+          $elemMatch: {
+            name: { $regex: new RegExp(userName, 'i') }
+          }
+        }
+      });
+    }
+    
+    // Add email-based participant matching if user has email (use $elemMatch for subdocument arrays)
+    if (userEmail) {
+      queryConditions.push({
+        'participants': {
+          $elemMatch: {
+            email: { $regex: new RegExp(`^${userEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
+          }
+        }
+      });
+    }
+
     const groups = await Group.find({
-      $or: [
-        { createdBy: userId },
-        { 'participants.user': userId },
-        { 'participants.name': { $regex: new RegExp(userName, 'i') } },
-      ],
+      $or: queryConditions,
     })
       .populate('createdBy', 'name email')
       .populate('participants.user', 'name email')
@@ -1275,6 +1671,11 @@ exports.nextRound = async (req, res, next) => {
       participant.paidAt = null;
     });
 
+    // Mark group as COMPLETED when all participants have received payment (shared link shows fresh state)
+    if (allNowPaidOut) {
+      group.status = 'COMPLETED';
+    }
+
     await group.save();
 
     // Update Round documents to reflect progression to the next round
@@ -1370,6 +1771,18 @@ exports.nextRound = async (req, res, next) => {
     const totalSavings = group.amountPerPerson && group.memberCount 
       ? group.amountPerPerson * group.memberCount 
       : 0;
+
+    // Broadcast real-time update to public group view (SSE)
+    if (group.shareCode && group.isShareable) {
+      try {
+        const groupData = await getPublicGroupData(group.shareCode);
+        if (groupData) {
+          sseService.broadcastGroupUpdate(group.shareCode, groupData);
+        }
+      } catch (broadcastErr) {
+        console.error('Error broadcasting group update:', broadcastErr);
+      }
+    }
 
     res.status(200).json({
       success: true,
@@ -1653,6 +2066,141 @@ exports.regenerateShareToken = async (req, res, next) => {
         shareLink,
         shareToken: group.shareToken,
         expiresAt: group.shareTokenExpiresAt,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// @desc    Update participant emails and send invitation emails
+// @route   PUT /api/groups/:groupId/participants/emails
+// @access  Private (Group Admin only)
+exports.updateParticipantEmails = async (req, res, next) => {
+  try {
+    const { groupId } = req.params;
+    const { participants } = req.body; // Array of { participantId, email }
+    const userId = req.user.id;
+
+    if (!participants || !Array.isArray(participants)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Participants array is required',
+      });
+    }
+
+    const group = await Group.findById(groupId).populate('createdBy', 'name email');
+    if (!group) {
+      return res.status(404).json({
+        success: false,
+        message: 'Group not found',
+      });
+    }
+
+    // Check authorization - only group admin can update emails
+    if (group.createdBy._id.toString() !== userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only group admin can update participant emails',
+      });
+    }
+
+    const updatedParticipants = [];
+    const emailsToSend = [];
+
+    // Update each participant's email
+    for (const update of participants) {
+      const { participantId, email } = update;
+      
+      if (!participantId) continue;
+      
+      const participant = group.participants.id(participantId);
+      if (!participant) continue;
+      
+      // Normalize email
+      const normalizedEmail = email ? email.trim().toLowerCase() : null;
+      
+      // Check if email changed and is valid
+      const emailChanged = normalizedEmail && participant.email !== normalizedEmail;
+      
+      if (normalizedEmail) {
+        participant.email = normalizedEmail;
+        updatedParticipants.push({
+          id: participantId,
+          name: participant.name,
+          email: normalizedEmail,
+        });
+        
+        // Queue email to be sent if email was added/changed
+        if (emailChanged) {
+          emailsToSend.push({
+            email: normalizedEmail,
+            name: participant.name,
+          });
+        }
+      }
+    }
+
+    await group.save();
+
+    // Ensure group has shareCode for view link - generate if missing
+    if (!group.shareCode && emailsToSend.length > 0) {
+      const { generateShareCode } = require('../utils/shareToken');
+      let shareCode;
+      let attempts = 0;
+      do {
+        shareCode = generateShareCode();
+        const existing = await Group.findOne({ shareCode });
+        if (!existing) break;
+        attempts++;
+        if (attempts > 10) throw new Error('Failed to generate unique share code');
+      } while (true);
+      group.shareCode = shareCode;
+      group.isShareable = true;
+      await group.save();
+      console.log(`[GROUP] Generated shareCode for email links: ${shareCode}`);
+    }
+
+    // Send invitation emails to participants with new/updated emails
+    const emailResults = [];
+    for (const emailData of emailsToSend) {
+      try {
+        await sendGroupInvitationEmail(
+          emailData.email,
+          emailData.name,
+          group.name,
+          group.createdBy.name,
+          group._id.toString(),
+          group.shareCode // Now guaranteed to exist
+        );
+        emailResults.push({
+          email: emailData.email,
+          success: true,
+        });
+        console.log(`✅ Email sent to ${emailData.email} for group ${group.name}`);
+      } catch (emailError) {
+        console.error(`❌ Failed to send email to ${emailData.email}:`, emailError.message);
+        emailResults.push({
+          email: emailData.email,
+          success: false,
+          error: emailError.message,
+        });
+      }
+    }
+
+    // Log activity
+    await GroupActivityLog.create({
+      group: groupId,
+      type: 'update_emails',
+      createdBy: userId,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `Updated ${updatedParticipants.length} participant email(s). Sent ${emailResults.filter(e => e.success).length} invitation email(s).`,
+      data: {
+        updatedParticipants,
+        emailResults,
       },
     });
   } catch (err) {

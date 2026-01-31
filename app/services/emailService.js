@@ -496,119 +496,43 @@ exports.sendWelcomeEmail = async (email, name) => {
 exports.sendGroupInvitationEmail = async (participantEmail, participantName, groupName, adminName, groupId = null, shareCode = null) => {
   const subject = `You've been added to ${groupName} on Ayuuto`;
   
-  // Generate view group URL using shareCode
-  // IMPORTANT: In production, BACKEND_URL must be set (e.g., https://your-app.railway.app)
-  // Never use localhost in emails - emails are opened on different devices!
+  // Generate view group URL - ALWAYS use DigitalOcean for email View Group button.
+  // Do NOT use BACKEND_URL/FRONTEND_URL here - they may be set to old Railway URL.
+  const DIGITALOCEAN_VIEW_URL = 'http://104.248.117.205';
+  const viewGroupBaseUrl = process.env.VIEW_GROUP_BASE_URL || DIGITALOCEAN_VIEW_URL;
   
-  const localPort = process.env.PORT || 5001;
-  
-  // Get base URL - prioritize BACKEND_URL for production
-  // Priority: BACKEND_URL > FRONTEND_URL > Auto-detect from platform > Railway default
-  let baseUrl = process.env.BACKEND_URL || process.env.FRONTEND_URL;
-  
-  // Auto-detect Railway URL (check multiple ways Railway exposes it)
-  if (!baseUrl) {
-    // Check for Railway environment variables
-    const railwayDomain = process.env.RAILWAY_PUBLIC_DOMAIN || 
-                          process.env.RAILWAY_STATIC_URL ||
-                          process.env.RAILWAY_TUNNEL_URL;
-    
-    if (railwayDomain) {
-      // Railway provides domain, ensure it has https://
-      baseUrl = railwayDomain.startsWith('http') ? railwayDomain : `https://${railwayDomain}`;
-      console.log(`[Email] ✅ Auto-detected Railway URL: ${baseUrl}`);
-    } else if (process.env.RAILWAY_ENVIRONMENT) {
-      // We're on Railway but no domain set - use known Railway URL
-      // This is a fallback - ideally BACKEND_URL should be set
-      baseUrl = 'https://web-production-40b9d.up.railway.app';
-      console.log(`[Email] ⚠️  Using default Railway URL (set BACKEND_URL in Railway for reliability): ${baseUrl}`);
-    }
-  }
-  
-  // Also check for other hosting platforms
-  if (!baseUrl) {
-    const host = process.env.RENDER_EXTERNAL_URL || 
-                 process.env.HEROKU_APP_NAME;
-    if (host) {
-      baseUrl = host.startsWith('http') ? host : `https://${host}`;
-      console.log(`[Email] Auto-detected production URL from platform: ${baseUrl}`);
-    }
-  }
-  
-  // Final check: if we're on Railway (detected by environment) but no URL, use default
-  if (!baseUrl && (process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_SERVICE_NAME)) {
-    baseUrl = 'https://web-production-40b9d.up.railway.app';
-    console.log(`[Email] ⚠️  WARNING: No BACKEND_URL set! Using default Railway URL: ${baseUrl}`);
-    console.log(`[Email] 💡 Set BACKEND_URL=https://web-production-40b9d.up.railway.app in Railway Variables for reliability`);
-  }
-  
-  // If baseUrl contains localhost, this is a configuration error in production
-  if (baseUrl && (baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1'))) {
-    if (process.env.NODE_ENV === 'production') {
-      console.error(`[Email] ⚠️  ERROR: Base URL contains localhost in production: ${baseUrl}. Set BACKEND_URL to your production domain!`);
-    } else {
-      // Development: replace localhost with network IP
-      const localIP = process.env.LOCAL_SERVER_IP || '192.168.18.126';
-      console.warn(`[Email] ⚠️  Base URL contains localhost, replacing with network IP: ${baseUrl}`);
-      baseUrl = baseUrl.replace(/localhost|127\.0\.0\.1/g, localIP);
-    }
-  }
-  
-  // If baseUrl contains port 3000 (common frontend port), replace with backend port
-  if (baseUrl && baseUrl.includes(':3000')) {
-    console.warn(`[Email] ⚠️  Base URL contains port 3000 (frontend), replacing with backend port ${localPort}: ${baseUrl}`);
-    baseUrl = baseUrl.replace(/:3000/g, `:${localPort}`);
-  }
-  
-  // Development fallback: use local network IP (ONLY if not on Railway)
-  if (!baseUrl && !process.env.RAILWAY_ENVIRONMENT && !process.env.RAILWAY_SERVICE_NAME) {
-    const localIP = process.env.LOCAL_SERVER_IP || '192.168.18.126';
-    baseUrl = `http://${localIP}:${localPort}`;
-    console.log(`[Email] Using development URL: ${baseUrl}`);
-  }
-  
-  // Safety check: NEVER use local IP in emails if we're on Railway
-  if (baseUrl && (baseUrl.includes('192.168.') || baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1'))) {
-    if (process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_SERVICE_NAME) {
-      console.error(`[Email] ❌ ERROR: Local IP detected on Railway! Overriding with Railway URL.`);
-      baseUrl = 'https://web-production-40b9d.up.railway.app';
-    }
-  }
-  
-  // Generate view group URL - uses shareCode, tries to deep link to app, falls back to public view
+  // Generate view group URL - always use DigitalOcean URL for View Group button
   let viewGroupUrl;
+  const urlBase = viewGroupBaseUrl.replace(/\/$/, '');
   if (shareCode) {
-    // Link to view page that will try to open app, or show public view
-    viewGroupUrl = `${baseUrl}/view/${shareCode}`;
+    viewGroupUrl = `${urlBase}/view/${shareCode}`;
   } else if (groupId) {
-    // Fallback if no shareCode
-    viewGroupUrl = `${baseUrl}/view-group/${groupId}`;
+    viewGroupUrl = `${urlBase}/view-group/${groupId}`;
   } else {
-    // Last resort
-    viewGroupUrl = `${baseUrl}`;
+    viewGroupUrl = urlBase;
   }
   
   // Log for debugging
   console.log(`[Email] Sending group notification email to: ${participantEmail}`);
   console.log(`[Email] Group ID: ${groupId}, ShareCode: ${shareCode ? 'provided' : 'missing'}`);
   console.log(`[Email] Generated view group URL: ${viewGroupUrl}`);
-  console.log(`[Email] Base URL used: ${baseUrl}`);
+  console.log(`[Email] View group base URL used: ${viewGroupBaseUrl}`);
   
   // Ensure URL is valid (not '#' and doesn't contain localhost)
   if (!viewGroupUrl || viewGroupUrl === '#' || viewGroupUrl.includes('localhost') || viewGroupUrl.includes('127.0.0.1')) {
     console.error(`[Email] ❌ ERROR: Invalid view group URL generated: ${viewGroupUrl}`);
-    viewGroupUrl = shareCode ? `${baseUrl}/view/${shareCode}` : `${baseUrl}`;
+    viewGroupUrl = shareCode ? `${urlBase}/view/${shareCode}` : urlBase;
     console.log(`[Email] Using fallback URL: ${viewGroupUrl}`);
   }
   
   // Final validation - ensure URL is a valid HTTP/HTTPS URL
   if (!viewGroupUrl.startsWith('http://') && !viewGroupUrl.startsWith('https://')) {
     console.error(`[Email] ❌ ERROR: URL doesn't start with http:// or https://: ${viewGroupUrl}`);
-    viewGroupUrl = shareCode ? `${baseUrl}/view/${shareCode}` : `${baseUrl}`;
+    viewGroupUrl = shareCode ? `${urlBase}/view/${shareCode}` : urlBase;
   }
   
   // Log final URL for debugging
-  console.log(`[Email] ✅ Final view group URL: ${viewGroupUrl}`);
+  console.log(`[Email] ✅ Final view group URL (DigitalOcean): ${viewGroupUrl}`);
   
   const html = `
     <!DOCTYPE html>
@@ -715,35 +639,13 @@ exports.sendGroupInvitationEmail = async (participantEmail, participantName, gro
           <div class="admin-info">Added by: ${adminName}</div>
         </div>
         
-        <p>You can now:</p>
-        <ul style="color: #555; font-size: 16px; line-height: 1.8;">
-          <li>View group details and participant information</li>
-          <li>Track payments and collections</li>
-          <li>Stay updated on group activities</li>
-        </ul>
+        <p>You can now view group details, track payments, and stay updated on group activities.</p>
         
-        <div style="text-align: center; margin-top: 30px; margin-bottom: 20px;">
-          <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin: 0 auto; width: 100%; max-width: 300px;">
-            <tr>
-              <td align="center" style="background-color: #4CAF50; border-radius: 8px; padding: 0;">
-                <a href="${viewGroupUrl}" target="_blank" style="display: block; color: #ffffff !important; text-decoration: none !important; background-color: #4CAF50; padding: 18px 36px; border-radius: 8px; font-weight: bold; font-size: 18px; text-align: center; border: none; width: 100%; -webkit-text-size-adjust: none; mso-hide: all;">View Group</a>
-              </td>
-            </tr>
-          </table>
-        </div>
-        
-        <!-- Mobile-friendly fallback button -->
-        <div style="text-align: center; margin-top: 15px;">
-          <a href="${viewGroupUrl}" style="display: inline-block; color: #4CAF50; text-decoration: underline; font-size: 16px; padding: 10px;">Tap here to view group</a>
-        </div>
-        
-        <p style="color: #999; font-size: 14px; margin-top: 20px; text-align: center;">
-          Click the button above to view the group details.<br>
-          If you have the Ayuuto app installed, it will open automatically.
+        <p style="color: #666; font-size: 16px; margin-top: 24px;">
+          View your group: <a href="${viewGroupUrl}" style="color: #4CAF50; word-break: break-all; text-decoration: underline;">${viewGroupUrl}</a>
         </p>
-        
-        <p style="color: #666; font-size: 12px; margin-top: 20px; text-align: center;">
-          Or copy this link: <a href="${viewGroupUrl}" style="color: #4CAF50; word-break: break-all; text-decoration: underline;">${viewGroupUrl}</a>
+        <p style="color: #999; font-size: 12px; margin-top: 12px;">
+          If the link does not open properly, copy the URL above and paste it into your browser.
         </p>
         
         <div class="footer">

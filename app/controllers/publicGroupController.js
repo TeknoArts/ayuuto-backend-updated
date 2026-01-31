@@ -1,20 +1,140 @@
 const Group = require('../models/Group');
 const Round = require('../models/Round');
 const PaymentLog = require('../models/PaymentLog');
+const GroupActivityLog = require('../models/GroupActivityLog');
+const { extractShareCode } = require('../utils/shareToken');
+const sseService = require('../services/sseService');
+
+/**
+ * Build public group data (same format as API response). Used by viewGroupByShareCode and SSE broadcast.
+ * @param {string} shareCode - Normalized share code
+ * @returns {Promise<object|null>} - Group object or null if not found/invalid
+ */
+async function getPublicGroupData(shareCode) {
+  if (!shareCode) return null;
+
+  const group = await Group.findOne({ shareCode })
+    .read('primary')
+    .populate('createdBy', 'name email')
+    .populate('participants.user', 'name email')
+    .lean();
+
+  if (!group || !group.isShareable) return null;
+  if (group.shareTokenExpiresAt && new Date() > group.shareTokenExpiresAt) return null;
+
+  const rounds = await Round.find({ group: group._id }).sort({ roundNumber: -1 });
+  const [paymentLogs, groupActivityLogs] = await Promise.all([
+    PaymentLog.find({ group: group._id })
+      .populate('paidBy', 'name')
+      .sort({ createdAt: -1 })
+      .limit(200)
+      .lean(),
+    GroupActivityLog.find({ group: group._id })
+      .sort({ createdAt: -1 })
+      .limit(200)
+      .lean(),
+  ]);
+
+  const shareSettings = group.shareSettings || {};
+  const showParticipants = shareSettings.showParticipants !== false;
+  const showPaymentStatus = shareSettings.showPaymentStatus !== false;
+  const showActivityLog = shareSettings.showActivityLog !== false;
+  const showAmounts = shareSettings.showAmounts !== false;
+
+  const participantNameById = new Map();
+  group.participants.forEach(p => {
+    participantNameById.set(p._id.toString(), p.name);
+  });
+
+  const roundsWithRecipient = rounds.map(r => {
+    const recipient = group.participants.find(
+      p => p._id.toString() === r.recipientParticipantId.toString()
+    );
+    return {
+      roundNumber: r.roundNumber,
+      recipient: recipient ? { name: recipient.name } : null,
+      status: r.status,
+      completedAt: r.completedAt,
+    };
+  });
+
+  const allHasReceivedPayment = group.participants && group.participants.length > 0 &&
+    group.participants.every(p => p.hasReceivedPayment === true);
+  const isCompleted = group.status === 'COMPLETED' || allHasReceivedPayment;
+
+  return {
+    id: group._id,
+    name: group.name,
+    memberCount: group.memberCount,
+    amountPerPerson: showAmounts ? group.amountPerPerson : undefined,
+    frequency: group.frequency,
+    collectionDate: group.collectionDate,
+    status: isCompleted ? 'COMPLETED' : (group.status || 'ACTIVE'),
+    isCompleted,
+    isOrderSet: group.isOrderSet || false,
+    currentRecipientIndex: group.currentRecipientIndex != null ? group.currentRecipientIndex : 0,
+    createdAt: group.createdAt,
+    createdBy: group.createdBy ? { name: group.createdBy.name } : null,
+    participants: showParticipants
+      ? group.participants.map(p => ({
+          name: p.name,
+          order: p.order,
+          isPaid: showPaymentStatus ? p.isPaid : undefined,
+          hasReceivedPayment: showPaymentStatus ? (isCompleted ? true : (p.hasReceivedPayment === true)) : false,
+        }))
+      : [],
+    rounds: roundsWithRecipient,
+    activityLog: showActivityLog
+      ? (() => {
+          const paymentEntries = paymentLogs.map(log => {
+            const participantName = log.participantId
+              ? participantNameById.get(log.participantId.toString()) || null
+              : null;
+            const paidByName = log.paidBy && log.paidBy.name ? log.paidBy.name : 'Admin';
+            const description = log.note || (participantName
+              ? `${participantName} was paid by ${paidByName}`
+              : `Payment of $${log.amount || 0}`);
+            return {
+              type: 'payment',
+              description,
+              amount: showAmounts ? log.amount : undefined,
+              paidBy: { name: paidByName },
+              paidTo: participantName ? { name: participantName } : null,
+              createdAt: log.createdAt || log.paidAt,
+            };
+          });
+          const activityEntries = groupActivityLogs.map(log => {
+            let description = '';
+            if (log.type === 'group_created') description = 'Admin created group';
+            else if (log.type === 'spin') description = 'Spin for order was clicked';
+            else if (log.type === 'update_emails') description = 'Admin updated participant emails';
+            return { type: log.type, description, createdAt: log.createdAt };
+          });
+          return [...paymentEntries, ...activityEntries]
+            .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        })()
+      : [],
+  };
+}
+
+exports.getPublicGroupData = getPublicGroupData;
 
 // @desc    View group by share code (Public) - No token in URL
 // @route   GET /api/public/groups/view/:shareCode
 // @access  Public
 exports.viewGroupByShareCode = async (req, res, next) => {
   try {
-    // Decode shareCode in case it was URL encoded
+    res.set({
+      'Cache-Control': 'private, no-cache, no-store, must-revalidate, max-age=0',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+      'Surrogate-Control': 'no-store',
+    });
+
     let { shareCode } = req.params;
     shareCode = decodeURIComponent(shareCode);
-    
-    // Normalize shareCode - convert to uppercase (share codes are stored in uppercase)
+    shareCode = extractShareCode(shareCode);
     shareCode = shareCode.toUpperCase().trim();
-    
-    console.log(`[PublicGroup] Viewing group with shareCode: ${shareCode}`);
 
     if (!shareCode) {
       return res.status(400).json({
@@ -23,130 +143,60 @@ exports.viewGroupByShareCode = async (req, res, next) => {
       });
     }
 
-    // Find group by shareCode (normalized to uppercase - share codes are stored in uppercase)
-    const group = await Group.findOne({ shareCode })
-      .populate('createdBy', 'name email')
-      .populate('participants.user', 'name email');
-
-    if (!group) {
+    const groupData = await getPublicGroupData(shareCode);
+    if (!groupData) {
       return res.status(404).json({
         success: false,
         message: 'Group not found or invalid share code',
       });
     }
 
-    // Check if sharing is enabled
-    if (!group.isShareable) {
-      return res.status(403).json({
-        success: false,
-        message: 'This group is not shareable',
-      });
-    }
-
-    // ShareCode is valid (no need to verify token separately - shareCode is the access key)
-
-    // Check token expiration
-    if (group.shareTokenExpiresAt && new Date() > group.shareTokenExpiresAt) {
-      return res.status(401).json({
-        success: false,
-        message: 'Share link has expired',
-      });
-    }
-
-    // Get group rounds (don't populate - recipientParticipantId is not a reference)
-    const rounds = await Round.find({ group: group._id })
-      .sort({ roundNumber: -1 });
-
-    // Get payment logs (only populate paidBy - participantId is not a reference)
-    const paymentLogs = await PaymentLog.find({ group: group._id })
-      .populate('paidBy', 'name')
-      .sort({ createdAt: -1 })
-      .limit(50); // Limit for performance
-
-    // Build response based on share settings
-    const shareSettings = group.shareSettings || {};
-    
-    // Map participant IDs to names for payment logs
-    const participantNameById = new Map();
-    group.participants.forEach(p => {
-      participantNameById.set(p._id.toString(), p.name);
-    });
-    
-    // Map rounds to include recipient name from participants
-    const roundsWithRecipient = rounds.map(r => {
-      // Find the participant by matching recipientParticipantId
-      const recipient = group.participants.find(
-        p => p._id.toString() === r.recipientParticipantId.toString()
-      );
-      
-      return {
-        roundNumber: r.roundNumber,
-        recipient: recipient ? {
-          name: recipient.name,
-        } : null,
-        status: r.status,
-        completedAt: r.completedAt,
-      };
-    });
-    
-    const response = {
+    res.status(200).json({
       success: true,
-      data: {
-        group: {
-          id: group._id,
-          name: group.name,
-          memberCount: group.memberCount,
-          amountPerPerson: shareSettings.showAmounts 
-            ? group.amountPerPerson 
-            : undefined,
-          frequency: group.frequency,
-          collectionDate: group.collectionDate,
-          status: group.status || 'ACTIVE', // Always show status, default to ACTIVE if not set
-          createdAt: group.createdAt,
-          createdBy: group.createdBy ? {
-            name: group.createdBy.name,
-          } : null,
-          participants: shareSettings.showParticipants
-            ? group.participants.map(p => ({
-                name: p.name,
-                order: p.order,
-                isPaid: shareSettings.showPaymentStatus ? p.isPaid : undefined,
-                hasReceivedPayment: shareSettings.showPaymentStatus 
-                  ? p.hasReceivedPayment 
-                  : undefined,
-              }))
-            : [],
-          rounds: roundsWithRecipient,
-          activityLog: shareSettings.showActivityLog
-            ? paymentLogs.map(log => {
-                // Get participant name from participantId
-                const participantName = log.participantId 
-                  ? participantNameById.get(log.participantId.toString()) || null
-                  : null;
-                
-                return {
-                  type: 'payment',
-                  description: log.note || `Payment of ${log.amount || 0}`,
-                  amount: shareSettings.showAmounts ? log.amount : undefined,
-                  paidBy: log.paidBy ? { name: log.paidBy.name } : null,
-                  paidTo: participantName ? { name: participantName } : null,
-                  createdAt: log.createdAt || log.paidAt,
-                };
-              })
-            : [],
-        },
-      },
-    };
+      data: { group: groupData },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
 
-    // Disable caching for group view - data changes frequently (payments, status)
+// @desc    SSE stream for real-time group updates
+// @route   GET /api/public/groups/view/:shareCode/stream
+// @access  Public
+exports.streamGroupByShareCode = async (req, res, next) => {
+  try {
+    let { shareCode } = req.params;
+    shareCode = decodeURIComponent(shareCode);
+    shareCode = extractShareCode(shareCode);
+    shareCode = shareCode.toUpperCase().trim();
+
+    if (!shareCode) {
+      res.status(400).json({ success: false, message: 'Share code is required' });
+      return;
+    }
+
+    const groupData = await getPublicGroupData(shareCode);
+    if (!groupData) {
+      res.status(404).json({ success: false, message: 'Group not found or invalid share code' });
+      return;
+    }
+
+    // Disable all caching for SSE
     res.set({
-      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
       'Pragma': 'no-cache',
       'Expires': '0',
-      'ETag': false, // Disable ETag to prevent 304 responses
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no', // Disable nginx buffering
     });
+    res.flushHeaders();
 
-    res.status(200).json(response);
+    sseService.subscribe(shareCode, res);
+
+    req.on('close', () => {
+      sseService.unsubscribe(shareCode, res);
+    });
   } catch (err) {
     next(err);
   }
