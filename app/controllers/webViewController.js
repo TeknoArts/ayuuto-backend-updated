@@ -174,10 +174,6 @@ body {
     gap: 10px;
 }
 
-.view-only-icon {
-    font-size: 16px;
-}
-
 .view-only-text {
     color: #FFD700;
     font-size: 13px;
@@ -638,7 +634,6 @@ body {
         </div>
 
         <div class="view-only-banner">
-            <span class="view-only-icon">👁</span>
             <span class="view-only-text">Viewing shared group</span>
         </div>
 
@@ -888,10 +883,12 @@ function renderParticipants(participants, group, isGroupCompleted) {
         const hasReceivedPayment = p.hasReceivedPayment === true;
         const paidClass = hasReceivedPayment ? 'participant-card-paid' : '';
         
-        // Serial number: green only for participants who received payout (like app)
+        // Serial number: only show after spin (when isOrderSet) - like app
         const serialNum = (p.order !== null && p.order !== undefined) ? p.order : (index + 1);
         const orderPaidClass = hasReceivedPayment ? 'order-number-paid' : '';
-        const orderNumberHtml = '<div class="order-number ' + orderPaidClass + '"><div class="order-number-text">' + serialNum + '</div></div>';
+        const orderNumberHtml = group.isOrderSet
+            ? '<div class="order-number ' + orderPaidClass + '"><div class="order-number-text">' + serialNum + '</div></div>'
+            : '';
         
         // PAID OUT badge only for participants who have received payment
         let rightHtml = '';
